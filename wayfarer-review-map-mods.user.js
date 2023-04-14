@@ -187,7 +187,7 @@ function init() {
 
         let markers = markerDiv.children;
         if (markers.length <=1) {
-            setTimeout(addNearbyTooltips, 500);
+            // empty? setTimeout(addNearbyTooltips, 500);
             return;
         }
         markers = Array.from(markers).filter(m => window.getComputedStyle(m).width === "32px");
@@ -421,7 +421,7 @@ function init() {
             };
 
             return new Promise(poll);
-        }
+        };
 
         updateGrid(map, gridLevel, col, secondGridLevel = null, secondCol = null) {
             this.polyLines.forEach((line) => {
@@ -432,7 +432,7 @@ function init() {
                 this.drawCellGrid(map, secondGridLevel, secondCol, 2);
             }
             return ret;
-        }
+        };
 
         async drawCellGrid(map, gridLevel, col, thickness = 1) {
             await this.until(this.check_map_bounds_ready, map);
