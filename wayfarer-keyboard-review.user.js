@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Keyboard Review
-// @version      0.8.1
+// @version      0.8.7
 // @description  Add keyboard review to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-keyboard-review.user.js
@@ -8,7 +8,7 @@
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
 
-// Copyright 2022 tehstone
+// Copyright 2022 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -244,7 +244,7 @@
                 } else if (e.keyCode >= 49 && e.keyCode <= 57) { // 1-9 normal
                     suppress = handleCustomWhatIf(card, e.keyCode - 49);
                 } else if (e.keyCode === 13) { // Enter
-                    trySubmit(false);
+                    trySubmit(e.ctrlKey);
                 }
             } else if (isReject && e.keyCode === 27) { // escape
                 cancelReject();
@@ -280,7 +280,7 @@
             } else if (e.keyCode == 9) { // Tab
                 suppress = selectAllPhotosOK();
             } else if (e.keyCode === 13) { // Enter
-                trySubmit(false);
+                trySubmit(e.ctrlKey);
             }
         } else if (isDuplicate) {
             if (e.keyCode === 27) { // escape
@@ -299,7 +299,11 @@
                 backReject();
             }
         } else {
-            if (revPosition === 6) { // what is it? menu
+            if (e.keyCode == 81) { // Q
+                fullSizePhoto('app-should-be-wayspot');
+            } else if (e.keyCode == 69) { // E
+                fullSizePhoto('app-supporting-info');
+            } else if (revPosition === 6) { // what is it? menu
                 if (e.keyCode >= 97 && e.keyCode <= 102) { // 1-6 Num pad
                     suppress = setRating(e.keyCode - 97, true);
                     document.activeElement.blur();
@@ -310,7 +314,7 @@
                     suppress = setRating(e.shiftKey ? -1 : -2, false);
                 } else if (e.keyCode === 13) { // Enter
                     document.activeElement.blur();
-                    trySubmit(false);
+                    trySubmit(e.ctrlKey);
                 } else if (e.keyCode === 37 || e.keyCode === 8) { // Left arrow key or backspace
                     suppress = updateRevPosition(-1, true);
                 }
@@ -344,14 +348,10 @@
             } else if (e.keyCode === 13) { // Enter
                 document.activeElement.blur();
                 trySubmit(false);
-            } else if (e.keyCode == 81) { // Q
-                fullSizePhoto('app-should-be-wayspot');
-            } else if (e.keyCode == 69) { // E
-                fullSizePhoto('app-supporting-info');
             } else if (e.keyCode == 65) { // A
                 showFullSupportingInfo();
             } else if (e.keyCode == 27) { // Escape
-                //exitStreetView();
+                exitStreetView();
             } else if (e.keyCode == 87) { // W
                 scrollCardBody(-50);
             } else if (e.keyCode == 83) { // S
@@ -359,6 +359,7 @@
             } else if (e.keyCode == 68) { // D
                 updateRevPosition(-10, false);
                 suppress = updateRevPosition(2, false);
+                exitStreetView();
             } else if (e.keyCode == 84) {
                 openTranslate();
             }
@@ -397,6 +398,10 @@
                 }
             });
             if (rate >= 0 && rate <= 5) {
+                if (rate >= whatIsYN.length) {
+                    setTimeout(activateWhatIsOther, 50);
+                    return true;
+                }
                 const opts = whatIsYN[rate].querySelectorAll('mat-button-toggle');
                 for (let i = 0; i < opts.length; i++) {
                     if (!opts[i].classList.contains('mat-button-toggle-checked')) {
@@ -405,19 +410,25 @@
                     }
                 }
             } else if (rate == -1) {
-                ratingElements[revPosition].querySelector('.review-categorization > button').click();
-                const wfinput = ratingElements[revPosition].querySelector('wf-select input');
-                if (wfinput) focusWhatIsInput(wfinput);
+                setTimeout(activateWhatIsOther, 50);
+                return true;
             }
             return true;
         } else if (whatIsButtons.length) {
-            // What is it?
-            whatIsButtons[rate].click();
-            const wfinput = ratingElements[revPosition].querySelector('wf-select input');
-            if (wfinput) focusWhatIsInput(wfinput);
+            setTimeout(activateWhatIsOther, 50);
             return true;
         }
         return false;
+    }
+
+    function activateWhatIsOther() {
+        const wfButtons = ratingElements[revPosition].getElementsByTagName("button");
+        const otherButton = wfButtons[wfButtons.length - 1];
+        if (otherButton) {
+            otherButton.click();
+            const wfinput = ratingElements[revPosition].querySelector('wf-select input');
+            if (wfinput) focusWhatIsInput(wfinput);
+        }
     }
 
     function setEditOption(option) {
@@ -489,9 +500,14 @@
     }
 
     function showFullSupportingInfo() {
-        if (document.getElementsByTagName('mat-dialog-container').length) return;
-        const supportingText = document.querySelector('app-supporting-info .wf-review-card__body .bg-gray-200 .cursor-pointer');
-        if (supportingText) supportingText.click();
+        if (document.getElementsByTagName('mat-dialog-container').length){
+            document.querySelector('div.cdk-overlay-backdrop.cdk-overlay-dark-backdrop.cdk-overlay-backdrop-showing').click();
+            return;
+        }
+        const supportingText = document.querySelector('div.cursor-pointer');
+        if (supportingText) {
+            supportingText.click();
+        }
     }
 
     function zoomInOnMaps() {
@@ -560,6 +576,11 @@
     function modifyRejectionPanel() {
         awaitElement(() => document.querySelector("app-review-rejection-abuse-modal"))
             .then((ref) => {
+                const cancelButton = document.querySelector(".mat-dialog-actions > button:nth-child(1)");
+                cancelButton.addEventListener('click', function(e) {
+                  isReject = false;
+                  rejectDepth = 0;
+                });
                 const els = document.getElementsByClassName("mat-expansion-panel");
                 if (els.length > 0) {
                     const first = els[0];
@@ -721,15 +742,19 @@
     function trySubmit(finish) {
         const dialog = document.querySelector('mat-dialog-container');
         if (dialog) dialog.parentNode.removeChild(dialog);
+        const submitWrapper = document.getElementsByTagName("app-submit-review-split-button");
+        const buttonParts = submitWrapper[0].getElementsByTagName("button");
+        if (finish) {
+            if (finish && buttonParts.length >= 3) {
+                buttonParts[2].click();
+                document.querySelector("button.mat-focus-indicator.mat-menu-item").click();
+            }
+            return;
+        }
         let smartButton = document.getElementById("wayfarerrtssbutton_0");
         if (smartButton === null || smartButton === undefined) {
             const submitWrapper = document.getElementsByTagName("app-submit-review-split-button");
-            const buttonParts = submitWrapper[0].getElementsByTagName("button");
-            if (finish) {
-                buttonParts[1].click();
-            } else {
-                buttonParts[0].click();
-            }
+            buttonParts[0].click();
         } else {
             smartButton.click();
         }
@@ -793,15 +818,15 @@
             }
             ${photoOptions}
 
-	    .card.kbdActiveElement {
-		    border-width: 1px;
-	    }
-	    .kbdActiveElement {
-		    border-color: #df471c;
-	    }
-	    .dark .kbdActiveElement {
-		    border-color: #20B8E3;
-	    }
+        .card.kbdActiveElement {
+            border-width: 1px;
+        }
+        .kbdActiveElement {
+            border-color: #df471c;
+        }
+        .dark .kbdActiveElement {
+            border-color: #20B8E3;
+        }
         .kbdDupeImageBox {
             width: 0;
             z-index: 10;

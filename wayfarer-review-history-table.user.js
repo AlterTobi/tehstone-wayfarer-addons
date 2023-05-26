@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review History Table
-// @version      0.1.4
+// @version      0.1.8
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
@@ -15,7 +15,7 @@
 
 // ==/UserScript==
 
-// Copyright 2022 tehstone, bilde
+// Copyright 2023 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -116,63 +116,63 @@
           deferRender: true,
           order: [[0, 'desc']],
           columns: [
-            { 
-            	data: 'ts',
-            	defaultContent: '',
+            {
+                data: 'ts',
+                defaultContent: '',
                 title: "Date",
                 width: "7%",
-          	    render: (ts, type) => {
+                render: (ts, type) => {
                     if (type === "display") {
                         return getFormattedDate(ts);
                     }
                     return ts;
-                }                
+                }
             },
-	        { 
-	        	data: 'title',
-	            title: 'Title',
-	            width: "16%"
-	        },
-	        { 
-	        	data: 'description',
-	            title: 'Description',
-	            defaultContent: '',
-	            width: "47%"
-	        },
-	        {
-	            data: 'review',
-	            defaultContent: '',
-	            title: 'Review',
-	            width: "15%",
-	            render: (...review) => {
-  		            if (review[0] !== null && review[0] !== undefined) {
-		                if (review[0].quality !== undefined ) {
-	    	                return `${review[0].quality}`;
-	        	        } else if (review[0].rejectReason != undefined) {
-	        	        	return l10n[`reject.reason.${review[0].rejectReason.toLowerCase()}.short`];
-	                	} else if (review[0].duplicate != undefined) {
-		                	return "Duplicate";
-	                	} else {
-		                	console.log(review[0]);
-	                	}
-		        	} else {
-			            return 'Skipped/Timed Out';
-		        	}
-	            }
-	        },
-	        { 
-	        	data: 'review',
-	            defaultContent: '',
-	            title: 'Location',
-	            width: "15%",
-	            render: (...review) => {
-	          	    return `<a href="https://intel.ingress.com/?ll=${review[2].lat},${review[2].lng}&z=16" "target="_blank">${review[2].lat},${review[2].lng}</a>`;
-	            }
+            {
+                data: 'title',
+                title: 'Title',
+                width: "16%"
             },
-	        { 
-	        	data: 'id',
-	          	visible: false 
-	        },
+            {
+                data: 'description',
+                title: 'Description',
+                defaultContent: '',
+                width: "47%"
+            },
+            {
+                data: 'review',
+                defaultContent: '',
+                title: 'Review',
+                width: "15%",
+                render: (...review) => {
+                    if (review[0] !== null && review[0] !== undefined) {
+                        if (review[0].quality !== undefined ) {
+                            return `${review[0].quality}`;
+                        } else if (review[0].rejectReason != undefined) {
+                            return l10n[`reject.reason.${review[0].rejectReason.toLowerCase()}.short`];
+                        } else if (review[0].duplicate != undefined) {
+                            return "Duplicate";
+                        } else {
+                            console.log(review[0]);
+                        }
+                    } else {
+                        return 'Skipped/Timed Out';
+                    }
+                }
+            },
+            {
+                data: 'review',
+                defaultContent: '',
+                title: 'Location',
+                width: "15%",
+                render: (...review) => {
+                    return `<a href="https://intel.ingress.com/?ll=${review[2].lat},${review[2].lng}&z=16" "target="_blank">${review[2].lat},${review[2].lng}</a>`;
+                }
+            },
+            {
+                data: 'id',
+                visible: false
+            },
           ],
       });
 
@@ -194,6 +194,7 @@
 
     const reviewContent = (review) => {
       const {
+                id,
                 title,
                 imageUrl,
                 description,
@@ -204,30 +205,31 @@
                 ts,
             } = review;
         const index = 0;
-        const {
-            comment,
-            newLocation,
-            quality,
-            spam,
-            rejectReason,
-            what,
-            duplicate,
-        } = review.review;
+        if (review.review) {
+            const {
+                comment,
+                newLocation,
+                quality,
+                spam,
+                rejectReason,
+                what,
+                duplicate,
+            } = review.review;
 
-        const score = spam ? 1 : quality || 0;
-        const status = duplicate ? "Duplicate" : review.review === "skipped" ? "Skipped" : "Timed Out/Pending";
+            const score = spam ? 1 : quality || 0;
+            const status = duplicate ? "Duplicate" : review.review === "skipped" ? "Skipped" : "Timed Out/Pending";
 
-        return `<div class="panel panel-default review-details">
+            return `<div class="panel panel-default review-details">
           <div class="panel-heading">${title} ${score ? getStarRating(score) : status}</div>
           <div class="panel-body">
               <div class="row">
                 <dl class="dl-horizontal">
                   <div class="col-xs-4"><a target="${getTarget(
-                      "images"
-                  )}" href="${imageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${imageUrl}" class="img-responsive" alt="${title}"></a>
+                "images"
+            )}" href="${imageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${imageUrl}" class="img-responsive" alt="${title}"></a>
                   <a target="${getTarget(
-                      "images"
-                  )}" href="${supportingImageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${supportingImageUrl}" class="img-responsive" alt="${title}"></a>
+                "images"
+            )}" href="${supportingImageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${supportingImageUrl}" class="img-responsive" alt="${title}"></a>
                   </div>
                 </dl>
                 <br>
@@ -241,16 +243,54 @@
                     ${getDD("Reject Reason", rejectReason)}
                     ${getDD("What is it?", what)}
                     ${getDD(
-                    "Location",
-                    getIntelLink(lat, lng, `Open in Intel`)
-                	)}
+                "Location",
+                getIntelLink(lat, lng, `Open in Intel`)
+            )}
                     ${getDD("Review Date", getFormattedDate(ts, true))}
                   </dl>
-                  ${renderScores(review)}
+                  <dt class="bbold">Review</dt><dd>${renderScores(review)}</dd>
+                  <dl class="dl-horizontal">
+                    ${getDD("ID", id)}
+                  </dl>
                 </div>
               </div>
             </div>
           </div>`;
+        } else {
+            return `<div class="panel panel-default review-details">
+          <div class="panel-heading">${title}</div>
+          <div class="panel-body">
+              <div class="row">
+                <dl class="dl-horizontal">
+                  <div class="col-xs-4"><a target="${getTarget(
+                "images"
+            )}" href="${imageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${imageUrl}" class="img-responsive" alt="${title}"></a>
+                  <a target="${getTarget(
+                "images"
+            )}" href="${supportingImageUrl}=s0"><img style="max-width: 40%; max-height: 300px; padding: 5px; float: left;" src="${supportingImageUrl}" class="img-responsive" alt="${title}"></a>
+                  </div>
+                </dl>
+                <br>
+                <div class="col-xs-12 col-sm-8" style="float: left; padding: 5px;">
+                  <dl class="dl-horizontal">
+                    ${getDD("Title", title)}
+                    ${getDD("Description", description)}
+                    ${getDD("Statement", statement)}
+                    ${getDD(
+                "Location",
+                getIntelLink(lat, lng, `Open in Intel`)
+            )}
+                    ${getDD("Review Date", getFormattedDate(ts, true))}
+                  </dl>
+                  <dt class="bbold">Review</dt><dd>Skipped/Timed Out</dd>
+                  <dl class="dl-horizontal">
+                    ${getDD("ID", id)}
+                  </dl>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }
     }
 
     const getDD = (term, definition) =>
@@ -264,7 +304,7 @@
 
     const getFormattedDate = (ts, fullDate) => {
       try {
-          const date = new Date(ts);
+          const date = new Date(Number(ts));
 
           if (fullDate) {
               return date.toString();
@@ -272,13 +312,13 @@
 
           return new Intl.DateTimeFormat("default", dateSettings).format(date);
       } catch(err) {
-        console.log(err);
+        console.log(`failed to parse date: ${ts}`);
         return ts;
       }
     };
 
     const getTarget = (target) => {
-    	return "_blank";
+        return "_blank";
     };
 
     const getIntelLink = (lat, lng, content) =>
@@ -415,9 +455,15 @@
 
     (() => {
       const css = `
-      		  bbold {
-      		  	font-weight: bold;
-      		  }
+              dt.bbold {
+                font-weight: bold;
+                color: #ff4713;
+              }
+
+              .dark dt.bbold {
+                font-weight: bold;
+                color: #20B8E3;
+              }
               table.dataTable {
               clear: both;
               margin-top: 6px !important;
