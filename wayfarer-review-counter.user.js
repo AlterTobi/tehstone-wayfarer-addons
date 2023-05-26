@@ -59,7 +59,7 @@
 
     function incrementCounter(e) {
         if (e.target.status == 202) {
-            let count = parseInt(sessionStorage.getItem('wfrcCounter') || '0');
+            let count = parseInt(sessionStorage.getItem('wfrcCounter') || '1');
             sessionStorage.setItem('wfrcCounter', ++count);
             if (CURRENT_EVENT.currentValid) {
                 CURRENT_EVENT.currentValid = false;
