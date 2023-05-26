@@ -3,7 +3,7 @@
 // @version      0.2.0
 // @description  Add review counter to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-counter.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-counter.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
@@ -81,14 +81,14 @@
         let countLabel = document.createElement('p');
         countLabel.textContent = 'Review count: ';
         let counter = document.createElement('p');
-        counter.textContent = sessionStorage.getItem('wfrcCounter') || '0';
+        counter.textContent = sessionStorage.getItem('wfrcCounter') || '1';
         div.appendChild(countLabel);
         div.appendChild(counter);
 
         function confirmReset() { 
             if (confirm('Reset review count?')) {
-              sessionStorage.setItem('wfrcCounter', 0);
-              counter.textContent = 0;
+              sessionStorage.setItem('wfrcCounter', 1);
+              counter.textContent = 1;
             }  
         }
             
