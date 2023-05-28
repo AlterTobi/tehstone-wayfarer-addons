@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Wayfarer Review Map Mods
-// @version      0.4.13
+// @version      0.7.3
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-map-mods.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-map-mods.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
 
-// Copyright 2022 tehstone
+// Copyright 2022 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -30,31 +30,49 @@
 /* eslint no-var: "error" */
 
 function init() {
-    let tryNumber = 10;
-    let settingsTryNumber = 10;
     let candidate;
     let map;
     let mapCtx;
     let overlay;
     let closeCircle;
+    let moveCircle;
     let cellShade;
     let userId;
+
+    let pano = null;
+    let listenSVFocus = false;
 
     /**
      * Overwrite the open method of the XMLHttpRequest.prototype to intercept the server calls
      */
-    (function (open) {
-    XMLHttpRequest.prototype.open = function (method, url) {
-        if (url == '/api/v1/vault/review' && method == 'GET') {
-            this.addEventListener('load', parseCandidate, false);
-        }
-        open.apply(this, arguments);
+    (function(open) {
+        XMLHttpRequest.prototype.open = function(method, url) {
+            if (url == "/api/v1/vault/review" && method == "GET") {
+                this.addEventListener('load', parseCandidate, false);
+            } else if (url == "/api/v1/vault/review" && method == "POST") {
+                if (pano) {
+                    // Street View panorama must be unloaded to avoid it remaining alive in the background
+                    // after each review is submitted. The additional photospheres pile up in browser memory
+                    // and either slow down the browser, or crash the tab entirely. This was the root cause
+                    // behind why reviews would slow down and eventually crash Firefox before Street View was
+                    // removed by default in Wayfarer 5.2.
+                    pano.setVisible(false);
+                    pano = null;
+                }
+            }
+            open.apply(this, arguments);
         };
     })(XMLHttpRequest.prototype.open);
 
+    document.addEventListener('focusin', (e) => {
+        // Prevent scroll to Street View on load (if applicable)
+        if (listenSVFocus && document.activeElement.classList.contains('mapsConsumerUiSceneInternalCoreScene__root')) {
+            listenSVFocus = false;
+            document.querySelector('mat-sidenav-content').scrollTo(0, 0);
+        }
+    });
+
     function parseCandidate(e) {
-        tryNumber = 10;
-        settingsTryNumber = 10;
         try {
             const response = this.response;
             const json = JSON.parse(response);
@@ -63,14 +81,16 @@ function init() {
                 return;
             }
             // ignore if it's related to captchas
-            if (json.captcha)
+            if (json.captcha) {
                 return;
+            }
 
             candidate = json.result;
             if (!candidate) {
                 console.warn('Wayfarer\'s response didn\'t include a candidate.');
                 return;
             }
+            addCss();
             checkPageType();
 
         } catch (e) {
@@ -79,22 +99,14 @@ function init() {
     }
 
     function checkPageType() {
-        const ref = document.querySelector('app-should-be-wayspot') ||
-                    document.querySelector('app-review-edit')
-
-        if (!ref) {
-            if (tryNumber === 0) {
-               document.querySelector('body')
-                  .insertAdjacentHTML('afterBegin', '<div class="alert alert-danger"><strong><span class="glyphicon glyphicon-remove"></span> Wayfarer Review History initialization failed, refresh page</strong></div>');
-                return;
-            }
-            setTimeout(checkPageType, 500);
-            tryNumber--;
-            return;
-        }
-        addMapMods();
-        addSettings();
-    }
+        awaitElement(() =>
+                document.querySelector('app-should-be-wayspot') ||
+                document.querySelector('app-review-edit'))
+            .then((ref) => {
+                addMapMods();
+                addSettings();
+            })
+    };
 
     function addMapMods() {
         if (typeof(google) === 'undefined') {
@@ -102,42 +114,90 @@ function init() {
             return;
         }
         let gmap;
-        if (document.querySelector('#check-duplicates-card nia-map')) {
-            gmap = document.querySelector('#check-duplicates-card nia-map');
-            mapCtx = gmap.__ngContext__[gmap.__ngContext__.length - 1];
-            map = mapCtx.componentRef.map;
-            map.setZoom(17);
-            map.setCenter({ lat: candidate.lat, lng: candidate.lng });
-            map.setMapTypeId('hybrid');
-            addNearbyTooltips();
-        } else if (document.querySelector("app-select-location-edit")) {
-            gmap = document.querySelector("app-select-location-edit");
-            mapCtx = gmap.__ngContext__[gmap.__ngContext__.length - 1].niaMap;
-            map = mapCtx.componentRef.map;
-        }
-        else {
-            return;
-        }
-        
-        const {cellSize, cellColor, secondGridEnabled, cellSizeTwo, cellColorTwo} = getDrawSettings();
+        awaitElement(() =>
+                document.querySelector('#check-duplicates-card nia-map') ||
+                document.querySelector("app-select-location-edit"))
+            .then((ref) => {
+                gmap = ref;
+                if (gmap === document.querySelector("app-select-location-edit")) {
+                    mapCtx = gmap.__ngContext__[gmap.__ngContext__.length - 1].niaMap;
+                    map = mapCtx.componentRef.map;
+                } else {
+                    mapCtx = gmap.__ngContext__[gmap.__ngContext__.length - 1];
+                    map = mapCtx.componentRef.map;
+                    const ll = {
+                        lat: candidate.lat,
+                        lng: candidate.lng
+                    };
+                    map.setZoom(17);
+                    map.setCenter(ll);
 
-        addS2Overlay(map, cellSize, cellColor, secondGridEnabled, cellSizeTwo, cellColorTwo);
-        addS2Highlight(map, candidate['lat'], candidate['lng']);
-        locationChangeBtnListener();
-        locationResetChangeBtnListener();
-/*
-        setTimeout(() => {
-          document.querySelector('.wf-page-header__title > div:nth-child(1)').scrollIntoView();
-        }, 250);
-*/
+                    const displayType = localStorage["wfmm_map_display" + userId];
+                    // if the selected type is map then we don't change anything
+
+                    if (displayType === 'satellite') {
+                        // hybrid includes labels as well as satellite imagery
+                        map.setMapTypeId('hybrid');
+                    } else if (displayType === 'streetview') {
+                        // do this here as well as a fallback if no SV image available
+                        map.setMapTypeId('hybrid');
+                        let sv = map.getStreetView();
+                        sv.setOptions({
+                            motionTracking: false,
+                            imageDateControl: true
+                        });
+                        const svClient = new google.maps.StreetViewService;
+                        svClient.getPanoramaByLocation(ll, 50, function(result, status) {
+                            if (status === "OK") {
+                                listenSVFocus = true;
+                                const nomLocation = new google.maps.LatLng(ll.lat, ll.lng);
+                                const svLocation = result.location.latLng;
+                                const heading = google.maps.geometry.spherical.computeHeading(svLocation, nomLocation);
+                                pano = sv;
+                                pano.setPosition(svLocation);
+                                pano.setPov({
+                                    heading,
+                                    pitch: 0,
+                                    zoom: 1
+                                });
+                                pano.setVisible(true);
+                            } else {
+                                const warningBox = document.createElement('p');
+                                warningBox.classList.add('wayfarerrmm__warningbox');
+                                warningBox.textContent = "No Streetview found within a close radius";
+                                ref.parentElement.insertBefore(warningBox, ref);
+                            }
+                        });
+                    }
+                    addNearbyTooltips();
+                }
+                const {
+                    cellSize,
+                    cellColor,
+                    secondGridEnabled,
+                    cellSizeTwo,
+                    cellColorTwo
+                } = getDrawSettings();
+
+                if (isDisplayGridEnabled()) {
+                    addS2Overlay(cellSize, cellColor, secondGridEnabled, cellSizeTwo, cellColorTwo);
+                    addS2HighlightAtCoords(candidate['lat'], candidate['lng']);
+                }
+                locationChangeBtnListener();
+                locationResetChangeBtnListener();
+            })
+            .catch(() => {
+                return;
+            });
     }
 
     function locationChangeBtnListener() {
         const markerone = mapCtx.markers.default.markers[0];
         const locationChangeBtn = document.querySelector("#check-duplicates-card nia-map ~ div button");
         if (locationChangeBtn) {
-            drawCloseCircle();
+
             locationChangeBtn.addEventListener('click', function() {
+                drawCloseCircle();
                 drawMoveCircle();
                 addListenerToMarker(true);
             }, true);
@@ -152,13 +212,31 @@ function init() {
         if (resetButton) {
             resetButton.onclick = function() {
                 map.setZoom(17);
+                drawCloseCircle();
+                if (isDisplayGridEnabled()) {
+                    addS2Highlight();
+                }
+                locationChangeBtnListener();
+                locationResetChangeBtnListener();
             }
         }
     }
 
+    function isDisplayGridEnabled() {
+        userId = getUserId();
+        let displayGrid = localStorage["wfmm_grid_enabled_" + userId];
+        if (displayGrid === undefined || displayGrid === null || displayGrid === "false" || displayGrid === "") {
+            displayGrid = false;
+            localStorage["wfmm_grid_enabled_" + userId] = displayGrid;
+        }
+        return displayGrid === "true";
+    }
+
     function addListenerToMarker(firstTime) {
         if (firstTime) {
-            setTimeout(function() {addListenerToMarker(false)}, 500);
+            setTimeout(function() {
+                addListenerToMarker(false)
+            }, 500);
         }
         if (mapCtx.markers.suggested) {
             const _markerOnDrag = mapCtx.markers.suggested.markerOnDrag;
@@ -166,15 +244,18 @@ function init() {
                 if (t) {
                     if (t.lat) {
                         drawCloseCircleAtCoords(t['lat'], t['lng']);
-                        const map = mapCtx.componentRef.map;
-                        addS2Highlight(map, t['lat'], t['lng']);
+                        if (isDisplayGridEnabled()) {
+                            addS2HighlightAtCoords(t['lat'], t['lng']);
+                        }
                     }
                 }
                 _markerOnDrag(t);
             };
         } else {
-            setTimeout(function() {addListenerToMarker(false)}, 250);
-                return;
+            setTimeout(function() {
+                addListenerToMarker(false)
+            }, 250);
+            return;
         }
     }
 
@@ -187,7 +268,7 @@ function init() {
 
         let markers = markerDiv.children;
         if (markers.length <=1) {
-            setTimeout(addNearbyTooltips, 500);
+            // empty? setTimeout(addNearbyTooltips, 500);
             return;
         }
         markers = Array.from(markers).filter(m => window.getComputedStyle(m).width === "32px");
@@ -246,145 +327,231 @@ function init() {
     }
 
     function addSettings() {
-        const settingsDiv = document.getElementById("wayfarerrtsettings");
-        if (!settingsDiv) {
-            if (settingsTryNumber === 0) {
-                return;
+        awaitElement(
+            () => document.querySelector("body > app-root > app-wayfarer > div > mat-sidenav-container > mat-sidenav-content > div > app-review > div.flex.justify-center.mt-8.ng-star-inserted")
+        ).then(ref => {
+            userId = getUserId();
+
+            let settingsDiv = document.getElementById("wayfarerrtsettings");
+            if (!settingsDiv) {
+                settingsDiv = document.createElement('div');
+                settingsDiv.id = "wayfarerrtsettings";
+                settingsDiv.classList.add('wayfarerrh__visible');
+
+                const settingsContainer = document.createElement('div');
+                settingsContainer.setAttribute('class', 'wrap-collabsible')
+                settingsContainer.id = "settingsContainer";
+
+                const collapsibleInput = document.createElement("input");
+                collapsibleInput.id = "collapsedSettings";
+                collapsibleInput.setAttribute("class", "toggle");
+                collapsibleInput.type = "checkbox";
+
+                const collapsibleLabel = document.createElement("label");
+                collapsibleLabel.setAttribute("class", "lbl-toggle-es");
+                collapsibleLabel.innerText = "Add-on Settings";
+                collapsibleLabel.setAttribute("for", "collapsedSettings");
+
+                const collapsibleContent = document.createElement("div");
+                collapsibleContent.setAttribute("class", "collapsible-content-es");
+
+                collapsibleContent.appendChild(settingsDiv);
+                settingsContainer.appendChild(collapsibleInput);
+                settingsContainer.appendChild(collapsibleLabel);
+                settingsContainer.appendChild(collapsibleContent);
+                insertAfter(settingsContainer, ref);
             }
-            setTimeout(addSettings, 500);
-            settingsTryNumber--;
-            return;
-        }
 
-        userId = getUserId();
+            let selection = localStorage["wfmm_map_display" + userId];
+            if (!selection) {
+                selection = 'satellite';
+                localStorage["wfmm_map_display" + userId] = selection;
+            }
 
-        let cellSizeInput = document.createElement('input');
-        cellSizeInput.setAttribute("type", "number");
-        cellSizeInput.setAttribute("size", '2');
-        let cellSize = localStorage["wfmm_cell_size_one_" + userId];
-        if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === ""){
-            cellSize = 17;
-            localStorage["wfmm_cell_size_one_" + userId] = cellSize;
-        }
-        cellSizeInput.value = cellSize;
-        cellSizeInput.addEventListener('change', function () {
-            cellSize = this.value;
-            localStorage["wfmm_cell_size_one_" + userId] = cellSize;
-        });
-        cellSizeInput.id = "wayfarermmcellsizeone";
-        cellSizeInput.classList.add('wayfarercc_input');
+            let displayGridInput = document.createElement('input');
+            displayGridInput.setAttribute("type", "checkbox");
+            let displayGridEnabled = localStorage["wfmm_grid_enabled_" + userId];
+            if (displayGridEnabled === undefined || displayGridEnabled === null || displayGridEnabled === "") {
+                displayGridEnabled = false;
+            }
+            displayGridInput.checked = displayGridEnabled === "true";
+            displayGridInput.addEventListener('change', function() {
+                displayGridEnabled = this.checked;
+                localStorage["wfmm_grid_enabled_" + userId] = displayGridEnabled;
+            });
+            displayGridInput.id = "wayfarermmgridenabled";
+            displayGridInput.classList.add('wayfarercc_input');
 
-        const cellSizeLabel = document.createElement("label");
-        cellSizeLabel.innerText = "Review Map Cell Size:";
-        cellSizeLabel.setAttribute("for", "wayfarermmcellsizeone");
-        cellSizeLabel.classList.add('wayfareres_settings_label');
+            const displayGridLabel = document.createElement("label");
+            displayGridLabel.innerText = "Draw S2 Grid Cells:";
+            displayGridLabel.setAttribute("for", "wayfarermmgridenabled");
+            displayGridLabel.classList.add('wayfareres_settings_label');
 
-        let cellColorInput = document.createElement('input');
-        cellColorInput.setAttribute("type", "text");
-        cellColorInput.setAttribute("minlength", '6');
-        cellColorInput.setAttribute("maxlength", '7');
-        cellColorInput.setAttribute("size", '2');
-        let cellColor = localStorage["wfmm_cell_color_one_" + userId];
-        if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === ""){
-            cellColor = "#FF0000";
-            localStorage["wfmm_cell_color_one_" + userId] = cellColor;
-        }
-        cellColorInput.value = cellColor;
-        cellColorInput.addEventListener('change', function () {
-            cellColor = this.value;
-            localStorage["wfmm_cell_color_one_" + userId] = cellColor;
-        });
-        cellColorInput.id = "wayfarermmcellcolorone";
-        cellColorInput.classList.add('wayfarercc_input');
-        cellColorInput.type = "color";
+            const displayCellsLabel = document.createElement("label");
+            displayCellsLabel.innerText = "Review Map Cell Size:";
+            displayCellsLabel.setAttribute("for", "wayfarermmcellsizeone");
+            displayCellsLabel.classList.add('wayfareres_settings_label');
 
-        const cellColorLabel = document.createElement("label");
-        cellColorLabel.innerText = "Review Map Grid Color:";
-        cellColorLabel.setAttribute("for", "wayfarermmcellcolorone");
-        cellColorLabel.classList.add('wayfareres_settings_label');
+            let cellSizeInput = document.createElement('input');
+            cellSizeInput.setAttribute("type", "number");
+            cellSizeInput.setAttribute("size", '2');
+            let cellSize = localStorage["wfmm_cell_size_one_" + userId];
+            if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === "") {
+                cellSize = 17;
+                localStorage["wfmm_cell_size_one_" + userId] = cellSize;
+            }
+            cellSizeInput.value = cellSize;
+            cellSizeInput.addEventListener('change', function() {
+                cellSize = this.value;
+                localStorage["wfmm_cell_size_one_" + userId] = cellSize;
+            });
+            cellSizeInput.id = "wayfarermmcellsizeone";
+            cellSizeInput.classList.add('wayfarercc_input');
 
-        // second grid cell
-        let secondGridEnabledInput = document.createElement('input');
-        secondGridEnabledInput.setAttribute("type", "checkbox");
-        let secondGridEnabled = localStorage["wfmm_second_grid_enabled_" + userId];
-        if (secondGridEnabled === undefined || secondGridEnabled === null || secondGridEnabled === ""){
-            secondGridEnabled = false;
-        }
-        secondGridEnabledInput.checked = secondGridEnabled === "true";
-        secondGridEnabledInput.addEventListener('change', function () {
-            secondGridEnabled = this.checked;
-            localStorage["wfmm_second_grid_enabled_" + userId] = secondGridEnabled;
-        });
-        secondGridEnabledInput.id = "wayfarermmsecondgridenabled";
-        secondGridEnabledInput.classList.add('wayfarercc_input');
+            const cellSizeLabel = document.createElement("label");
+            cellSizeLabel.innerText = "Review Map Cell Size:";
+            cellSizeLabel.setAttribute("for", "wayfarermmcellsizeone");
+            cellSizeLabel.classList.add('wayfareres_settings_label');
 
-        const secondGridEnabledLabel = document.createElement("label");
-        secondGridEnabledLabel.innerText = "Draw Second Grid Cells:";
-        secondGridEnabledLabel.setAttribute("for", "wayfarermmsecondgridenabled");
-        secondGridEnabledLabel.classList.add('wayfareres_settings_label');
+            let cellColorInput = document.createElement('input');
+            cellColorInput.setAttribute("type", "text");
+            cellColorInput.setAttribute("minlength", '6');
+            cellColorInput.setAttribute("maxlength", '7');
+            cellColorInput.setAttribute("size", '2');
+            let cellColor = localStorage["wfmm_cell_color_one_" + userId];
+            if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === "") {
+                cellColor = "#FF0000";
+                localStorage["wfmm_cell_color_one_" + userId] = cellColor;
+            }
+            cellColorInput.value = cellColor;
+            cellColorInput.addEventListener('change', function() {
+                cellColor = this.value;
+                localStorage["wfmm_cell_color_one_" + userId] = cellColor;
+            });
+            cellColorInput.id = "wayfarermmcellcolorone";
+            cellColorInput.classList.add('wayfarercc_input');
+            cellColorInput.type = "color";
 
-        let cellSizeInputTwo = document.createElement('input');
-        cellSizeInputTwo.setAttribute("type", "number");
-        cellSizeInputTwo.setAttribute("size", '2');
-        cellSize = localStorage["wfmm_cell_size_two_" + userId];
-        if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === ""){
-            cellSize = 14;
-            localStorage["wfmm_cell_size_two_" + userId] = cellSize;
-        }
-        cellSizeInputTwo.value = cellSize;
-        cellSizeInputTwo.addEventListener('change', function () {
-            cellSize = this.value;
-            localStorage["wfmm_cell_size_two_" + userId] = cellSize;
-        });
-        cellSizeInputTwo.id = "wayfarermmcellsizetwo";
-        cellSizeInputTwo.classList.add('wayfarercc_input');
+            const cellColorLabel = document.createElement("label");
+            cellColorLabel.innerText = "Review Map Grid Color:";
+            cellColorLabel.setAttribute("for", "wayfarermmcellcolorone");
+            cellColorLabel.classList.add('wayfareres_settings_label');
 
-        const cellSizeLabelTwo = document.createElement("label");
-        cellSizeLabelTwo.innerText = "Review Map 2nd Cell Size:";
-        cellSizeLabelTwo.setAttribute("for", "wayfarermmcellsizetwo");
-        cellSizeLabelTwo.classList.add('wayfareres_settings_label');
+            // second grid cell
+            let secondGridEnabledInput = document.createElement('input');
+            secondGridEnabledInput.setAttribute("type", "checkbox");
+            let secondGridEnabled = localStorage["wfmm_second_grid_enabled_" + userId];
+            if (secondGridEnabled === undefined || secondGridEnabled === null || secondGridEnabled === "") {
+                secondGridEnabled = false;
+            }
+            secondGridEnabledInput.checked = secondGridEnabled === "true";
+            secondGridEnabledInput.addEventListener('change', function() {
+                secondGridEnabled = this.checked;
+                localStorage["wfmm_second_grid_enabled_" + userId] = secondGridEnabled;
+            });
+            secondGridEnabledInput.id = "wayfarermmsecondgridenabled";
+            secondGridEnabledInput.classList.add('wayfarercc_input');
 
-        let cellColorInputTwo = document.createElement('input');
-        cellColorInputTwo.setAttribute("type", "text");
-        cellColorInputTwo.setAttribute("minlength", '6');
-        cellColorInputTwo.setAttribute("maxlength", '7');
-        cellColorInputTwo.setAttribute("size", '2');
-        cellColor = localStorage["wfmm_cell_color_two_" + userId];
-        if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === ""){
-            cellColor = "#FF0000";
-            localStorage["wfmm_cell_color_two_" + userId] = cellColor;
-        }
-        cellColorInputTwo.value = cellColor;
-        cellColorInputTwo.addEventListener('change', function () {
-            cellColor = this.value;
-            localStorage["wfmm_cell_color_two_" + userId] = cellColor;
-        });
-        cellColorInputTwo.id = "wayfarermmcellcolortwo";
-        cellColorInputTwo.type = "color";
-        cellColorInputTwo.classList.add('wayfarercc_input');
+            const secondGridEnabledLabel = document.createElement("label");
+            secondGridEnabledLabel.innerText = "Draw Second Grid Cells:";
+            secondGridEnabledLabel.setAttribute("for", "wayfarermmsecondgridenabled");
+            secondGridEnabledLabel.classList.add('wayfareres_settings_label');
 
-        const cellColorLabelTwo = document.createElement("label");
-        cellColorLabelTwo.innerText = "Review Map 2nd Grid Color:";
-        cellColorLabelTwo.setAttribute("for", "wayfarermmcellcolortwo");
-        cellColorLabelTwo.classList.add('wayfareres_settings_label');
+            let cellSizeInputTwo = document.createElement('input');
+            cellSizeInputTwo.setAttribute("type", "number");
+            cellSizeInputTwo.setAttribute("size", '2');
+            cellSize = localStorage["wfmm_cell_size_two_" + userId];
+            if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === "") {
+                cellSize = 14;
+                localStorage["wfmm_cell_size_two_" + userId] = cellSize;
+            }
+            cellSizeInputTwo.value = cellSize;
+            cellSizeInputTwo.addEventListener('change', function() {
+                cellSize = this.value;
+                localStorage["wfmm_cell_size_two_" + userId] = cellSize;
+            });
+            cellSizeInputTwo.id = "wayfarermmcellsizetwo";
+            cellSizeInputTwo.classList.add('wayfarercc_input');
 
-        settingsDiv.appendChild(document.createElement('br'));
-        settingsDiv.appendChild(cellSizeLabel);
-        settingsDiv.appendChild(cellSizeInput);
-        settingsDiv.appendChild(document.createElement('br'));
-        settingsDiv.appendChild(cellColorLabel);
-        settingsDiv.appendChild(cellColorInput);
-        settingsDiv.appendChild(document.createElement('br'));
-        settingsDiv.appendChild(secondGridEnabledLabel);
-        settingsDiv.appendChild(secondGridEnabledInput);
-        settingsDiv.appendChild(document.createElement('br'));
-        settingsDiv.appendChild(cellSizeLabelTwo);
-        settingsDiv.appendChild(cellSizeInputTwo);
-        settingsDiv.appendChild(document.createElement('br'));
-        settingsDiv.appendChild(cellColorLabelTwo);
-        settingsDiv.appendChild(cellColorInputTwo);
-        settingsDiv.appendChild(document.createElement('br'));
-    }
+            const cellSizeLabelTwo = document.createElement("label");
+            cellSizeLabelTwo.innerText = "Review Map 2nd Cell Size:";
+            cellSizeLabelTwo.setAttribute("for", "wayfarermmcellsizetwo");
+            cellSizeLabelTwo.classList.add('wayfareres_settings_label');
+
+            let cellColorInputTwo = document.createElement('input');
+            cellColorInputTwo.setAttribute("type", "text");
+            cellColorInputTwo.setAttribute("minlength", '6');
+            cellColorInputTwo.setAttribute("maxlength", '7');
+            cellColorInputTwo.setAttribute("size", '2');
+            cellColor = localStorage["wfmm_cell_color_two_" + userId];
+            if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === "") {
+                cellColor = "#FF0000";
+                localStorage["wfmm_cell_color_two_" + userId] = cellColor;
+            }
+            cellColorInputTwo.value = cellColor;
+            cellColorInputTwo.addEventListener('change', function() {
+                cellColor = this.value;
+                localStorage["wfmm_cell_color_two_" + userId] = cellColor;
+            });
+            cellColorInputTwo.id = "wayfarermmcellcolortwo";
+            cellColorInputTwo.type = "color";
+            cellColorInputTwo.classList.add('wayfarercc_input');
+
+            const cellColorLabelTwo = document.createElement("label");
+            cellColorLabelTwo.innerText = "Review Map 2nd Grid Color:";
+            cellColorLabelTwo.setAttribute("for", "wayfarermmcellcolortwo");
+            cellColorLabelTwo.classList.add('wayfareres_settings_label');
+
+            const div = document.createElement('div');
+            let select = document.createElement('select');
+            select.title = "Default Map View";
+            const mapTypes = [{
+                name: "map",
+                title: "Map"
+            }, {
+                name: "satellite",
+                title: "Satellite"
+            }, {
+                name: "streetview",
+                title: "Streetview"
+            }];
+            select.innerHTML = mapTypes.map(item => `<option value="${item.name}" ${item.name == selection ? 'selected' : ''}>${item.title}</option>`).join('');
+            select.addEventListener('change', function() {
+                selection = select.value;
+                localStorage["wfmm_map_display" + userId] = selection;
+            });
+            select.id = 'wayfarermmmapdisplay';
+            select.classList.add('wayfarercc_select');
+
+            const selectLabel = document.createElement("label");
+            selectLabel.innerText = "Default Map View:";
+            selectLabel.setAttribute("for", "wayfarermmmapdisplay");
+            selectLabel.classList.add('wayfareres_settings_label');
+
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(displayGridLabel);
+            settingsDiv.appendChild(displayGridInput);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(cellSizeLabel);
+            settingsDiv.appendChild(cellSizeInput);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(cellColorLabel);
+            settingsDiv.appendChild(cellColorInput);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(secondGridEnabledLabel);
+            settingsDiv.appendChild(secondGridEnabledInput);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(cellSizeLabelTwo);
+            settingsDiv.appendChild(cellSizeInputTwo);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(cellColorLabelTwo);
+            settingsDiv.appendChild(cellColorInputTwo);
+            settingsDiv.appendChild(document.createElement('br'));
+            settingsDiv.appendChild(selectLabel);
+            settingsDiv.appendChild(select);
+            settingsDiv.appendChild(document.createElement('br'));
+        })
+    };
 
     function getUserId() {
         var els = document.getElementsByTagName("image");
@@ -392,7 +559,7 @@ function init() {
             const element = els[i];
             const attribute = element.getAttribute("href");
             let fields = attribute.split('/');
-            let userId = fields[fields.length-1];
+            let userId = fields[fields.length - 1];
             fields = userId.split('=');
             userId = fields[0];
             return userId;
@@ -400,13 +567,13 @@ function init() {
         return "temporary_default_userid";
     }
 
-    class S2Overlay{
+    class S2Overlay {
         constructor() {
             this.polyLines = [];
         }
 
 
-        check_map_bounds_ready(map){
+        check_map_bounds_ready(map) {
             if (!map || map.getBounds === undefined || map.getBounds() === undefined) {
                 return false;
             } else {
@@ -416,12 +583,12 @@ function init() {
 
         until(conditionFunction, map) {
             const poll = resolve => {
-                if(conditionFunction(map)) resolve();
+                if (conditionFunction(map)) resolve();
                 else setTimeout(_ => poll(resolve), 400);
             };
 
             return new Promise(poll);
-        }
+        };
 
         updateGrid(map, gridLevel, col, secondGridLevel = null, secondCol = null) {
             this.polyLines.forEach((line) => {
@@ -432,7 +599,7 @@ function init() {
                 this.drawCellGrid(map, secondGridLevel, secondCol, 2);
             }
             return ret;
-        }
+        };
 
         async drawCellGrid(map, gridLevel, col, thickness = 1) {
             await this.until(this.check_map_bounds_ready, map);
@@ -485,7 +652,7 @@ function init() {
             this.polyLines.push(polyline);
         };
 
-         getLatLngPoint(data) {
+        getLatLngPoint(data) {
             const result = {
                 lat: typeof data.lat == 'function' ? data.lat() : data.lat,
                 lng: typeof data.lng == 'function' ? data.lng() : data.lng
@@ -505,7 +672,7 @@ function init() {
         };
     }
 
-    function addS2Overlay(map, gridLevel, color, secondGridEnabled, gridLevelTwo, colorTwo){
+    function addS2Overlay(gridLevel, color, secondGridEnabled, gridLevelTwo, colorTwo) {
         overlay = new S2Overlay();
 
         if (secondGridEnabled) {
@@ -540,9 +707,32 @@ function init() {
     }
 
     function drawMoveCircle() {
-        const {lat, lng} = candidate;
+        if (moveCircle) {
+            moveCircle.setMap(null)
+        }
+        const {
+            lat,
+            lng
+        } = candidate;
         const latLng = new google.maps.LatLng(lat, lng);
-        new google.maps.Circle({
+        moveCircle = new google.maps.Circle({
+            map: map,
+            center: latLng,
+            radius: 2,
+            strokeColor: 'red',
+            fillColor: 'red',
+            strokeOpacity: 0.8,
+            strokeWeight: 1,
+            fillOpacity: 0.2
+        });
+    }
+
+    function drawMoveCircleAtCoords(lat, lng) {
+        if (moveCircle) {
+            moveCircle.setMap(null)
+        }
+        const latLng = new google.maps.LatLng(lat, lng);
+        moveCircle = new google.maps.Circle({
             map: map,
             center: latLng,
             radius: 2,
@@ -558,7 +748,10 @@ function init() {
         if (closeCircle) {
             closeCircle.setMap(null)
         }
-        const {lat, lng} = candidate;
+        const {
+            lat,
+            lng
+        } = candidate;
         const latLng = new google.maps.LatLng(lat, lng);
         closeCircle = new google.maps.Circle({
             map: map,
@@ -589,13 +782,49 @@ function init() {
         });
     }
 
-    function addS2Highlight(map, lat, lng){
+    function addS2Highlight() {
         if (cellShade) {
             cellShade.setMap(null)
         }
 
-        const {cellSize} = getDrawSettings();
-        let cell = window.S2.S2Cell.FromLatLng({lat: lat, lng: lng}, cellSize);
+        const {
+            lat,
+            lng
+        } = candidate;
+        const {
+            cellSize
+        } = getDrawSettings();
+        let cell = window.S2.S2Cell.FromLatLng({
+            lat: lat,
+            lng: lng
+        }, cellSize);
+
+        let cellCorners = cell.getCornerLatLngs();
+        cellCorners[4] = cellCorners[0]; //Loop it
+
+        cellShade = new google.maps.Polygon({
+            path: cellCorners,
+            geodesic: true,
+            fillColor: '#000',
+            fillOpacity: 0.2,
+            strokeOpacity: 0,
+            strokeWeight: 0,
+            map: map
+        });
+    }
+
+    function addS2HighlightAtCoords(lat, lng) {
+        if (cellShade) {
+            cellShade.setMap(null)
+        }
+
+        const {
+            cellSize
+        } = getDrawSettings();
+        let cell = window.S2.S2Cell.FromLatLng({
+            lat: lat,
+            lng: lng
+        }, cellSize);
 
         let cellCorners = cell.getCornerLatLngs();
         cellCorners[4] = cellCorners[0]; //Loop it
@@ -614,40 +843,187 @@ function init() {
     function getDrawSettings() {
         userId = getUserId();
         let cellSize = localStorage["wfmm_cell_size_one_" + userId];
-        if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === ""){
+        if (cellSize === undefined || cellSize === null || cellSize === "false" || cellSize === "") {
             cellSize = 17;
             localStorage["wfmm_cell_size_one_" + userId] = cellSize;
         }
         let cellColor = localStorage["wfmm_cell_color_one_" + userId];
-        if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === ""){
+        if (cellColor === undefined || cellColor === null || cellColor === "false" || cellColor === "") {
             cellColor = "#FF0000";
             localStorage["wfmm_cell_color_one_" + userId] = cellColor;
         }
 
         let secondGridEnabled = localStorage["wfmm_second_grid_enabled_" + userId];
-        if (secondGridEnabled === undefined || secondGridEnabled === null || secondGridEnabled === ""){
+        if (secondGridEnabled === undefined || secondGridEnabled === null || secondGridEnabled === "") {
             secondGridEnabled = false;
         } else {
             secondGridEnabled = secondGridEnabled === "true";
         }
-        
+
         let cellSizeTwo = localStorage["wfmm_cell_size_two_" + userId];
-        if (cellSizeTwo === undefined || cellSizeTwo === null || cellSizeTwo === "false" || cellSizeTwo === ""){
+        if (cellSizeTwo === undefined || cellSizeTwo === null || cellSizeTwo === "false" || cellSizeTwo === "") {
             cellSizeTwo = 14;
             localStorage["wfmm_cell_size_two_" + userId] = cellSizeTwo;
         }
         let cellColorTwo = localStorage["wfmm_cell_color_two_" + userId];
-        if (cellColorTwo === undefined || cellColorTwo === null || cellColorTwo === "false" || cellColorTwo === ""){
+        if (cellColorTwo === undefined || cellColorTwo === null || cellColorTwo === "false" || cellColorTwo === "") {
             cellColorTwo = "#0000FF";
             localStorage["wfmm_cell_color_two_" + userId] = cellColorTwo;
         }
 
         return {
-            "cellSize": cellSize, "cellColor": cellColor, "secondGridEnabled": secondGridEnabled, 
-            "cellSizeTwo": cellSizeTwo, "cellColorTwo": cellColorTwo
+            "cellSize": cellSize,
+            "cellColor": cellColor,
+            "secondGridEnabled": secondGridEnabled,
+            "cellSizeTwo": cellSizeTwo,
+            "cellColorTwo": cellColorTwo
         };
     }
 
+    const awaitElement = get => new Promise((resolve, reject) => {
+        let triesLeft = 10;
+        const queryLoop = () => {
+            const ref = get();
+            if (ref) resolve(ref);
+            else if (!triesLeft) reject();
+            else setTimeout(queryLoop, 100);
+            triesLeft--;
+        }
+        queryLoop();
+    });
+
+    function insertAfter(newNode, referenceNode) {
+        referenceNode.parentNode.insertBefore(newNode, referenceNode.nextSibling);
+    };
+
+    function addCss() {
+        const css = `
+            .wayfarercc {
+                color: #333;
+                margin-left: 2em;
+                padding-top: 0.3em;
+                text-align: center;
+                display: none;
+              }
+
+            .wayfarercc_select {
+                margin:  2px 12px;
+                padding: 2px 12px;
+                background-color: #FFFFFF;
+                color: black;
+            }
+
+            .wayfarercc_input {
+                margin:  2px 12px;
+                padding: 2px 12px;
+                width: 90px;
+                background-color: #FFFFFF;
+                color: black;
+            }
+
+            .wayfareres_settings_label {
+                margin:  2px 12px;
+                padding: 2px 12px;
+                color: black;
+                font-size: 16px;
+            }
+
+            .wrap-collabsible {
+                margin: 1.2rem auto;
+            }
+
+            #collapsible,
+            #collapsed-stats {
+                display: none;
+            }
+
+            .lbl-toggle-es {
+                display: block;
+                font-weight: bold;
+                font-family: monospace;
+                font-size: 1.2rem;
+                text-transform: uppercase;
+                text-align: center;
+                padding: 1rem;
+                color: white;
+                background: #DF471C;
+                cursor: pointer;
+                border-radius: 7px;
+                transition: all 0.25s ease-out;
+                width: 50%;
+                margin: auto;
+            }
+
+            .lbl-toggle-es:hover {
+                color: lightgrey;
+            }
+
+            .lbl-toggle-es::before {
+                content: ' ';
+                display: inline-block;
+                border-top: 5px solid transparent;
+                border-bottom: 5px solid transparent;
+                border-left: 5px solid currentColor;
+                vertical-align: middle;
+                margin-right: .7rem;
+                transform: translateY(-2px);
+                transition: transform .2s ease-out;
+            }
+
+            .toggle {
+                display:none;
+            }
+
+            .toggle:checked+.lbl-toggle-es::before {
+                transform: rotate(90deg) translateX(-3px);
+            }
+
+            .collapsible-content-es {
+                max-height: 0px;
+                overflow: hidden;
+                transition: max-height .25s ease-in-out;
+                font-size: 16px;
+                background-color: #e5e5e5;
+                border: 1px;
+                border-radius: 3px;
+                border-style: double;
+                border-color: #ff4713;
+                margin: auto;
+                width: 50%;
+            }
+
+            .toggle:checked+.lbl-toggle-es+.collapsible-content-es {
+                max-height: 9999999pt;
+            }
+
+            .toggle:checked+.lbl-toggle-es {
+                border-bottom-right-radius: 0;
+                border-bottom-left-radius: 0;
+            }
+
+            .collapsible-content-es .content-inner {
+                border-bottom: 1px solid rgba(0, 0, 0, 1);
+                border-left: 1px solid rgba(0, 0, 0, 1);
+                border-right: 1px solid rgba(0, 0, 0, 1);
+                border-bottom-left-radius: 7px;
+                border-bottom-right-radius: 7px;
+                padding: .5rem 1rem;
+            }
+
+            .wayfarerrmm__warningbox {
+                font-size: 1.1em;
+                font-weight: bold;
+                color: black;
+            }
+            .dark .wayfarerrmm__warningbox {
+                color: white;
+            }
+        `;
+        const style = document.createElement('style');
+        style.type = 'text/css';
+        style.innerHTML = css;
+        document.querySelector('head').appendChild(style);
+    }
 
     // start s2 lib code
     (function(exports) {
