@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Wayfarer Review Map Mods
-// @version      0.4.13
+// @version      0.4.14
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-map-mods.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-map-mods.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
