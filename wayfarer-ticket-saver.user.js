@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Wayfarer Ticket Saver
-// @version      0.2.2
+// @version      0.2.3
 // @description  Saves interactions with Niantic Support initiated through Wayfarer.
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-ticket-saver.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-ticket-saver.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // @match        https://webchat.helpshift.com/*
@@ -321,7 +321,11 @@
                         case 'Text Input Response':
                         case 'Text Message with Text Input':
                         case 'Text':
-                            bubble.innerHTML = highlightSearch(msg.body);
+                            if (msg.author.name) {
+                                bubble.innerHTML = highlightSearch("<b>" + msg.author.name + ": </b><br>" + msg.body);
+                            } else {
+                                bubble.innerHTML = highlightSearch(msg.body);
+                            }
                             break;
 
                         case 'Text Message with Option Input':
