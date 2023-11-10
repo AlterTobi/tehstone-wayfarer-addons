@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review History
-// @version      0.4.4
+// @version      0.5.1
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-history-idb.user.js
@@ -101,6 +101,7 @@
     };
 
     const handleIncomingReview = result => new Promise((resolve, reject) => {
+        console.log("handleIncomingReview")
         let saveColumns = [];
         const common = ['type', 'id', 'title', 'description', 'lat', 'lng'];
         switch (result.type) {
@@ -121,6 +122,21 @@
                 tx.oncomplete = event => { db.close(); resolve(); };
                 tx.onerror = reject;
                 const objectStore = tx.objectStore(OBJECT_STORE_NAME);
+                const getReview = objectStore.get(result.id);
+                getReview.onsuccess = () => {
+                    if (getReview.result) {
+                        if(getReview.result.review) {
+                            alert(`You have reviewed this before! timestamp: ${getReview.result.ts}`);
+                        }
+                    }
+                };
+                getReview.onerror = reject;
+            }).catch(reject);
+            getIDBInstance().then(db => {
+                const tx = db.transaction([OBJECT_STORE_NAME], "readwrite");
+                tx.oncomplete = event => { db.close(); resolve(); };
+                tx.onerror = reject;
+                const objectStore = tx.objectStore(OBJECT_STORE_NAME);
                 objectStore.put(saveData);
                 tx.commit();
             }).catch(reject);
@@ -130,6 +146,7 @@
     });
 
     const handleSubmittedReview = (review, response) => new Promise((resolve, reject) => {
+        console.log("handleSubmittedReview")
         if (response === 'api.review.post.accepted' && review.hasOwnProperty('id')) {
             getIDBInstance().then(db => {
                 const tx = db.transaction([OBJECT_STORE_NAME], "readwrite");
@@ -425,7 +442,7 @@
             dateAfter = new Date(dateAfter);
             dateInput.valueAsDate = dateAfter;
         }
-        
+
         dateInput.addEventListener('change', function () {
             const userId = getUserId();
             dateAfter = new Date(this.value);
@@ -481,7 +498,7 @@
         rangeLabel.setAttribute("for", "wayfarerrhlocation");
         rangeLabel.classList.add('wayfareres_settings_label');
         rangeLabel.title = "If location and range are set, displayed values will be filtered to those within the given number of kilometers to the location provided."
-        
+
 
         settingsDiv.appendChild(sectionLabel);
         settingsDiv.appendChild(document.createElement('br'));

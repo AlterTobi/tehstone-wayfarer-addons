@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Counter
-// @version      0.2.7
+// @version      0.4.1
 // @description  Add review counter to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-counter.user.js
@@ -31,63 +31,164 @@
 
 (function() {
 
-    const CURRENT_EVENT = {
-        from: Date.parse('2023-05-24T12:00Z'),
-        to: Date.parse('2023-06-09T19:00Z'),
+     const CURRENT_EVENT = 
+    {
+        from: Date.parse('2023-09-27T19:00Z'),
+        to: Date.parse('2023-10-06T19:00Z'),
         label: 'Challenge:',
         color: 'goldenrod',
         currentValid: -1,
         initialized: false,
         parts: [
             {
+                label: '🇮🇹',
+                regions: ['IT'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+            {
+                label: '🇫🇷',
+                regions: ['FR'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+            {
+                label: '🇩🇪',
+                regions: ['DE_BB','DE_BY','DE_BE','DE_BW','DE_HB','DD_HE','DE_HH','DE_MV','DE_NI','DD_NW','DE_RP','DE_SH','DD_SL','DE_SN','DE_ST','DE_TH'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+            {
+                label: '🇬🇧',
+                regions: ['GB'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+             {
+                label: '🇩🇰',
+                regions: ['DK'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+             {
+                label: '🇸🇪',
+                regions: ['SE'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+             {
+                label: '🇨🇭',
+                regions: ['CH'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+            {
+                label: '🇦🇹',
+                regions: ['AT'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
+                counter: 0
+            },
+             {
                 label: '🇪🇸',
-                regions: ['ES', 'IC', 'EA'],
-                from: Date.parse('2023-05-24T12:00Z'),
-                to: Date.parse('2023-05-30T22:27Z'),
-                counter: 0
-            },
-            {
-                label: '🇮🇩',
-                regions: ['ID'],
-                from: Date.parse('2023-05-30T22:27Z'),
-                to: Date.parse('2023-06-02T00:06Z'),
-                counter: 0
-            },
-            {
-                label: '🇧🇷',
-                regions: ['BR'],
-                from: Date.parse('2023-06-02T00:06Z'),
-                to: Date.parse('2023-06-04T18:33Z'),
-                counter: 0
-            },
-            {
-                label: '🇮🇳',
-                regions: ['IN'],
-                from: Date.parse('2023-06-04T18:33Z'),
-                to: Date.parse('2023-06-05T22:01Z'),
+                regions: ['ES'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
                 counter: 0
             },
             {
                 label: '🗺️',
-                regions: ['ES', 'IC', 'EA', 'IN', 'BR', 'ID'],
-                from: Date.parse('2023-06-05T22:01Z'),
-                to: Date.parse('2023-06-07T23:59Z'),
+                regions: ['IT', 'FR', 'DE_BB','DE_BY','DE_BE','DE_BW','DE_HB','DD_HE','DE_HH','DE_MV','DE_NI','DD_NW','DE_RP','DE_SH','DD_SL','DE_SN','DE_ST','DE_TH', 'GB', 'DK', 'SE', 'ES', 'AT', 'CH'],
+                from: Date.parse('2023-09-27T19:00Z'),
+                to: Date.parse('2023-10-04T19:00Z'),
                 counter: 0
             }
         ]
     };
+
+    const PAST_EVENTS = [
+        {
+            from: Date.parse('2023-06-16T19:00Z'),
+            to: Date.parse('2023-09-27T19:00Z'),
+            label: 'Challenge:',
+            color: 'goldenrod',
+            currentValid: -1,
+            initialized: false,
+            parts: [
+                {
+                    label: '🗺️',
+                    regions: ['Q3_ATL', 'Q3_CHI', 'Q3_HAM'],
+                    from: Date.parse('2023-06-16T19:00Z'),
+                    to: Date.parse('2023-09-27T19:00Z'),
+                    counter: 0
+                }
+            ]
+        },
+        {
+            from: Date.parse('2023-05-24T12:00Z'),
+            to: Date.parse('2023-06-09T19:00Z'),
+            label: 'Challenge:',
+            color: 'goldenrod',
+            currentValid: -1,
+            initialized: false,
+            parts: [
+                {
+                    label: '🇪🇸',
+                    regions: ['ES', 'IC', 'EA'],
+                    from: Date.parse('2023-05-24T12:00Z'),
+                    to: Date.parse('2023-05-30T22:27Z'),
+                    counter: 0
+                },
+                {
+                    label: '🇮🇩',
+                    regions: ['ID'],
+                    from: Date.parse('2023-05-30T22:27Z'),
+                    to: Date.parse('2023-06-02T00:06Z'),
+                    counter: 0
+                },
+                {
+                    label: '🇧🇷',
+                    regions: ['BR'],
+                    from: Date.parse('2023-06-02T00:06Z'),
+                    to: Date.parse('2023-06-04T18:33Z'),
+                    counter: 0
+                },
+                {
+                    label: '🇮🇳',
+                    regions: ['IN'],
+                    from: Date.parse('2023-06-04T18:33Z'),
+                    to: Date.parse('2023-06-05T22:01Z'),
+                    counter: 0
+                },
+                {
+                    label: '🗺️',
+                    regions: ['ES', 'IC', 'EA', 'IN', 'BR', 'ID'],
+                    from: Date.parse('2023-06-05T22:01Z'),
+                    to: Date.parse('2023-06-07T23:59Z'),
+                    counter: 0
+                }
+            ]
+        }
+    ];
 
     /**
      * Overwrite the open method of the XMLHttpRequest.prototype to intercept the server calls
      */
     (function (open) {
         XMLHttpRequest.prototype.open = function (method, url) {
-            if (url == '/api/v1/vault/review') {
-                if (method == 'GET') {
+            if (method == 'GET') {
+                if (url == '/api/v1/vault/review' || url == '/api/v1/vault/home') {
                     this.addEventListener('load', injectCounter, false);
-                } else if (method == 'POST') {
-                    this.addEventListener('load', incrementCounter, false);
                 }
+            } else if (method == 'POST') {
+                this.addEventListener('load', incrementCounter, false);
             }
             open.apply(this, arguments);
         };
@@ -111,8 +212,11 @@
             return;
         }
 
-        const div = document.createElement('div');
-        div.className = 'wayfarerrctr';
+        let counterDiv = document.getElementById("counterDiv");
+        if (counterDiv === null) {
+            const div = document.createElement('div');
+            div.className = 'wayfarerrctr';
+            div.id = 'counterDiv';
 
         let countLabel = document.createElement('p');
         countLabel.textContent = 'Review count: ';
@@ -126,18 +230,19 @@
               sessionStorage.setItem('wfrcCounter', 1);
               counter.textContent = 1;
             }  
-        }
-            
-        countLabel.addEventListener('click', confirmReset);
-        counter.addEventListener('click', confirmReset);
+               
+            countLabel.addEventListener('click', confirmReset);
+            counter.addEventListener('click', confirmReset);
 
-        const container = ref.parentNode.parentNode;
-        container.appendChild(div);
+            const container = ref.parentNode.parentNode;
+            container.appendChild(div);
+        }
 
         const now = Date.now();
         const windowRef = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
         if (CURRENT_EVENT && now >= CURRENT_EVENT.from && now <= CURRENT_EVENT.to && windowRef.wft_plugins_api && windowRef.wft_plugins_api.openIn) {
             CURRENT_EVENT.currentValid = -1;
+            console.log("rc")
             const WFTApi = windowRef.wft_plugins_api;
             const response = this.response;
             const json = JSON.parse(response);
@@ -154,45 +259,49 @@
                 }
             }
             const renderEventCounter = () => {
-                const div = document.createElement('div');
-                div.classList.add('wayfarerrctr_event');
-                let countLabel = document.createElement('p');
-                countLabel.textContent = CURRENT_EVENT.label;
-                const evTable = document.createElement('table');
-                const evRow = document.createElement('tr');
-                evTable.appendChild(evRow);
-                div.appendChild(countLabel);
-                div.appendChild(evTable);
+                let eventCounterDiv = document.getElementById("eventCounterDiv");
+                if (eventCounterDiv === null) {
+                    const div = document.createElement('div');
+                    div.classList.add('wayfarerrctr_event');
+                    div.id = "eventCounterDiv"
+                    let countLabel = document.createElement('p');
+                    countLabel.textContent = CURRENT_EVENT.label;
+                    const evTable = document.createElement('table');
+                    const evRow = document.createElement('tr');
+                    evTable.appendChild(evRow);
+                    div.appendChild(countLabel);
+                    div.appendChild(evTable);
 
-                const counter = document.createElement('td');
-                counter.classList.add('wayfarerrctr_event_big');
-                counter.textContent = CURRENT_EVENT.parts.map(p => p.counter).reduce((a, b) => a + b) + '';
-                counter.style.color = CURRENT_EVENT.color;
-                evRow.appendChild(counter);
+                    const counter = document.createElement('td');
+                    counter.classList.add('wayfarerrctr_event_big');
+                    counter.textContent = CURRENT_EVENT.parts.map(p => p.counter).reduce((a, b) => a + b) + '';
+                    counter.style.color = CURRENT_EVENT.color;
+                    evRow.appendChild(counter);
 
-                if (CURRENT_EVENT.parts.length > 1) {
-                    let evPC;
-                    for (let i = 0; i < CURRENT_EVENT.parts.length; i++) {
-                        if (i % 2 == 0) {
-                            if (evPC) evRow.appendChild(evPC);
-                            evPC = document.createElement('td');
-                            evPC.classList.add('wayfarerrctr_event_ptCell');
+                    if (CURRENT_EVENT.parts.length > 1) {
+                        let evPC;
+                        for (let i = 0; i < CURRENT_EVENT.parts.length; i++) {
+                            if (i % 2 == 0) {
+                                if (evPC) evRow.appendChild(evPC);
+                                evPC = document.createElement('td');
+                                evPC.classList.add('wayfarerrctr_event_ptCell');
+                            }
+                            const evPP = document.createElement('p');
+                            evPP.classList.add('wayfarerrctr_event_ptLabel');
+                            evPP.textContent = CURRENT_EVENT.parts[i].label + ' ';
+                            const evPN = document.createElement('span');
+                            evPN.textContent = CURRENT_EVENT.parts[i].counter + '';
+                            evPN.style.color = now >= CURRENT_EVENT.parts[i].from && now <= CURRENT_EVENT.parts[i].to ? CURRENT_EVENT.color : '#7f7f7f';
+                            evPP.appendChild(evPN);
+                            evPC.appendChild(evPP);
                         }
-                        const evPP = document.createElement('p');
-                        evPP.classList.add('wayfarerrctr_event_ptLabel');
-                        evPP.textContent = CURRENT_EVENT.parts[i].label + ' ';
-                        const evPN = document.createElement('span');
-                        evPN.textContent = CURRENT_EVENT.parts[i].counter + '';
-                        evPN.style.color = now >= CURRENT_EVENT.parts[i].from && now <= CURRENT_EVENT.parts[i].to ? CURRENT_EVENT.color : '#7f7f7f';
-                        evPP.appendChild(evPN);
-                        evPC.appendChild(evPP);
+                        evRow.appendChild(evPC);
                     }
-                    evRow.appendChild(evPC);
-                }
 
-                const container = ref.parentNode.parentNode;
-                container.appendChild(div);
-            };
+                    const container = ref.parentNode.parentNode;
+                    container.appendChild(div);
+                }
+            }
             if (!CURRENT_EVENT.initialized) {
                 CURRENT_EVENT.initialized = true;
                 if (WFTApi.reviewHistory) {
@@ -217,6 +326,19 @@
             }
         }
     }
+
+
+    const awaitElement = get => new Promise((resolve, reject) => {
+        let triesLeft = 10;
+        const queryLoop = () => {
+            const ref = get();
+            if (ref) resolve(ref);
+            else if (!triesLeft) reject();
+            else setTimeout(queryLoop, 100);
+            triesLeft--;
+        }
+        queryLoop();
+    });
 
     (function() {
         const css = `
