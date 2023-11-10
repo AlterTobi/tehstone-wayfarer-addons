@@ -3,7 +3,7 @@
 // @version      0.4.1
 // @description  Add review counter to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-counter.user.js
+// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-counter.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
@@ -218,19 +218,20 @@
             div.className = 'wayfarerrctr';
             div.id = 'counterDiv';
 
-        let countLabel = document.createElement('p');
-        countLabel.textContent = 'Review count: ';
-        let counter = document.createElement('p');
-        counter.textContent = sessionStorage.getItem('wfrcCounter') || '1';
-        div.appendChild(countLabel);
-        div.appendChild(counter);
+            let countLabel = document.createElement('p');
+            countLabel.textContent = 'Review count: ';
+            let counter = document.createElement('p');
+            counter.textContent = sessionStorage.getItem('wfrcCounter') || '1';
+            div.appendChild(countLabel);
+            div.appendChild(counter);
 
-        function confirmReset() { 
-            if (confirm('Reset review count?')) {
-              sessionStorage.setItem('wfrcCounter', 1);
-              counter.textContent = 1;
-            }  
-               
+            function confirmReset() { 
+                if (confirm('Reset review count?')) {
+                  sessionStorage.setItem('wfrcCounter', 1);
+                  counter.textContent = 0;
+                }  
+            }
+                
             countLabel.addEventListener('click', confirmReset);
             counter.addEventListener('click', confirmReset);
 
