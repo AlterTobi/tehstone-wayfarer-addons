@@ -285,7 +285,13 @@ function init() {
             });
             dcButton.style.marginLeft = '5px';
             box.appendChild(dcButton);
-            // sendToKingClippy();
+            const smButton = document.createElement('button');
+            smButton.innerHTML = '&#x2705;';
+            smButton.addEventListener('click', () => {
+              sendToKingClippy();
+            });
+            smButton.style.marginLeft = '5px';
+            box.appendChild(smButton);
         }
 
         const sendToKingClippy = () => {
