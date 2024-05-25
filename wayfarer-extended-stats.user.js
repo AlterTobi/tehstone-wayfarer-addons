@@ -285,7 +285,7 @@ function init() {
             });
             dcButton.style.marginLeft = '5px';
             box.appendChild(dcButton);
-            sendToKingClippy();
+            // sendToKingClippy();
         }
 
         const sendToKingClippy = () => {
