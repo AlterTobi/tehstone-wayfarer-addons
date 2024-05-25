@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Nomination Map
-// @version      0.4.3
+// @version      0.5.2
 // @description  Add map of all nominations
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-map.user.js
@@ -8,7 +8,7 @@
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
 
-// Copyright 2023 tehstone, bilde
+// Copyright 2024 tehstone, bilde, Tntnnbltn
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -101,7 +101,7 @@ function init() {
             if (json.captcha)
                 return;
 
-            nominations = json.result.nominations;
+            nominations = json.result.submissions;
             if (!nominations) {
                 alert('Wayfarer\'s response didn\'t include nominations.');
                 return;
@@ -194,7 +194,7 @@ function init() {
             marker.addListener('click', () => {
                 let inputs = document.querySelectorAll('input[type=text]');
                 let input = inputs[0];
-                input.value = nomination.title;
+                input.value = nomination.lat;
                 input.dispatchEvent(new Event('input'));
                 setTimeout(clickFirst, 500);
                 setTimeout(() => {
@@ -250,7 +250,7 @@ function init() {
         container.appendChild(collapsibleLabel);
         container.appendChild(collapsibleContent);
 
-        const sectionElement = document.getElementsByTagName("app-nominations")[0];
+        const sectionElement = document.getElementsByTagName("app-submissions")[0];
         sectionElement.insertBefore(container, sectionElement.children[0]);
 
         return mapElement;
@@ -259,7 +259,7 @@ function init() {
     function initPrimaryListener() {
         awaitElement(() => document.querySelector(".cursor-pointer")).then(ref => {
             ref.addEventListener('click', function() {
-            	const modal = document.getElementsByTagName("app-nominations-sort-modal");
+            	const modal = document.getElementsByTagName("app-submissions-sort-modal");
                 const els = modal[0].getElementsByClassName("wf-button--primary");
     	        for (let i = 0; i < els.length; i++) {
     	            els[i].addEventListener('click', function() {
@@ -571,7 +571,7 @@ function init() {
      *       'anchor': (Array) The anchor position of the label text.
      *       'textColor': (string) The text color.
      *       'textSize': (number) The text size.
-     *       'backgroundPosition': (string) The position of the backgound x, y.
+     *       'backgroundPosition': (string) The position of the background x, y.
      * @constructor
      * @extends google.maps.OverlayView
      */
@@ -722,7 +722,7 @@ function init() {
         }
 
         /**
-         * Extends a objects prototype by anothers.
+         * Extends an object's prototype by another's.
          *
          * @param {Object} obj1 The object to be extended.
          * @param {Object} obj2 The object to extend with.
@@ -739,7 +739,7 @@ function init() {
         }
 
         /**
-         * Implementaion of the interface method.
+         * Implementation of the interface method.
          * @ignore
          */
         onAdd() {
@@ -747,7 +747,7 @@ function init() {
         }
 
         /**
-         * Implementaion of the interface method.
+         * Implementation of the interface method.
          * @ignore
          */
         draw() {}
@@ -877,7 +877,7 @@ function init() {
          *
          *  @param {Array.<google.maps.Marker>} markers The markers in the clusterer.
          *  @param {number} numStyles The number of styles available.
-         *  @return {Object} A object properties: 'text' (string) and 'index' (number).
+         *  @return {Object} An object properties: 'text' (string) and 'index' (number).
          *  @private
          */
         calculator_(markers, numStyles) {
@@ -900,7 +900,7 @@ function init() {
          * Set the calculator function.
          *
          * @param {function(Array, number)} calculator The function to set as the
-         *     calculator. The function should return a object properties:
+         *     calculator. The function should return an object properties:
          *     'text' (string) and 'index' (number).
          *
          */
@@ -1165,7 +1165,7 @@ function init() {
         }
 
         /**
-         * Determins if a marker is contained in a bounds.
+         * Determines if a marker is contained in a bounds.
          *
          * @param {google.maps.Marker} marker The marker to check.
          * @param {google.maps.LatLngBounds} bounds The bounds to check against.
@@ -1182,7 +1182,7 @@ function init() {
         clearMarkers() {
             this.resetViewport(true);
 
-            // Set the markers a empty array.
+            // Set the markers an empty array.
             this.markers_ = [];
         }
 
@@ -1346,7 +1346,7 @@ function init() {
         }
 
         /**
-         * Determins if a marker is already added to the cluster.
+         * Determines if a marker is already added to the cluster.
          *
          * @param {google.maps.Marker} marker The marker to check.
          * @return {boolean} True if the marker is already added.
@@ -1545,7 +1545,7 @@ function init() {
      *     'anchor': (Array) The anchor position of the label text.
      *     'textColor': (string) The text color.
      *     'textSize': (number) The text size.
-     *     'backgroundPosition: (string) The background postition x, y.
+     *     'backgroundPosition: (string) The background position x, y.
      * @param {number=} opt_padding Optional padding to apply to the cluster icon.
      * @constructor
      * @extends google.maps.OverlayView
@@ -1695,7 +1695,7 @@ function init() {
         }
 
         /**
-         * Sets the icon to the the styles.
+         * Sets the icon to the styles.
          */
         useStyle() {
             var index = Math.max(0, this.sums_.index - 1);
@@ -2008,8 +2008,8 @@ function init() {
 
         // hilbert space-filling curve
         // based on http://blog.notdot.net/2009/11/Damn-Cool-Algorithms-Spatial-indexing-with-Quadtrees-and-Hilbert-Curves
-        // note: rather then calculating the final integer hilbert position, we just return the list of quads
-        // this ensures no precision issues whth large orders (S3 cell IDs use up to 30), and is more
+        // note: rather than calculating the final integer hilbert position, we just return the list of quads
+        // this ensures no precision issues with large orders (S3 cell IDs use up to 30), and is more
         // convenient for pulling out the individual bits as needed later
         var pointToHilbertQuadList = function(x, y, order, face) {
             var hilbertMap = {

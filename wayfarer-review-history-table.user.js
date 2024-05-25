@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review History Table
-// @version      0.2.0
+// @version      0.4.0
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
@@ -15,7 +15,7 @@
 
 // ==/UserScript==
 
-// Copyright 2023 tehstone, bilde
+// Copyright 2024 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -112,6 +112,8 @@
     const renderReviewHistory = result => new Promise((resolve, reject) => {
         getIDBInstance().then(db => {
             const toSave = [];
+            const editsToSave = [];
+            const photosToSave = [];
             const tx = db.transaction([OBJECT_STORE_NAME], 'readonly');
             tx.oncomplete = event => db.close();
             const objectStore = tx.objectStore(OBJECT_STORE_NAME);
@@ -120,17 +122,70 @@
                 const { result } = getAllReviews;
                 for (let i = 0; i < result.length; i++) {
                     if (result[i]["type"] === "NEW") {
-                      toSave.push(result[i]);
+                        toSave.push(result[i]);
+                    } else if (result[i]["type"] === "EDIT") {
+                        editsToSave.push(result[i]);
+                    } else if (result[i]["type"] === "PHOTO") {
+                        photosToSave.push(result[i]);
                     }
                 }
+                renderTableSelector();
                 renderTable(toSave);
+                renderEditsTable(editsToSave);
+                renderPhotosTable(photosToSave);
             };
         }).catch(reject);
     });
 
+    function renderTableSelector() {
+        const tableSelectorContainer = document.createElement("div");
+        
+
+        let displayNominationTable = document.createElement('button');
+        displayNominationTable.innerHTML = "Nomination Reviews";
+        displayNominationTable.onclick = function() {
+            toggleTableDisplay("nomination-table");
+        }
+        displayNominationTable.classList.add('wayfarerns__button');
+        tableSelectorContainer.appendChild(displayNominationTable);
+
+        let displayEditTable = document.createElement('button');
+        displayEditTable.innerHTML = "Edit Reviews";
+        displayEditTable.onclick = function() {
+            toggleTableDisplay("edit-table");
+        }
+        displayEditTable.classList.add('wayfarerns__button');
+        tableSelectorContainer.appendChild(displayEditTable);
+
+        let displayPhotoTable = document.createElement('button');
+        displayPhotoTable.innerHTML = "Photo Reviews";
+        displayPhotoTable.onclick = function() {
+            toggleTableDisplay("photo-table");
+        }
+        displayPhotoTable.classList.add('wayfarerns__button');
+        tableSelectorContainer.appendChild(displayPhotoTable);
+
+        const ratingNarRef = document.querySelector('wf-rating-bar');
+        const container = ratingNarRef.parentNode.parentNode;
+        container.appendChild(tableSelectorContainer);
+    }
+
+    function toggleTableDisplay(table) {
+        const nominationTable = document.getElementById("nomination-table");
+        const editTable = document.getElementById("edit-table");
+        const photoTable = document.getElementById("photo-table");
+        nominationTable.style.display = "none";
+        editTable.style.display = "none";
+        photoTable.style.display = "none";
+        const displayTable = document.getElementById(table);
+        displayTable.style.display = "block";
+    }
+
     function renderTable(reviewData) {
       const tableContainer = document.createElement("div");
+      tableContainer.id = "nomination-table";
       tableContainer.classList.add("table");
+      tableContainer.style.display = "block";
       tableContainer.insertAdjacentHTML("beforeend",
         `
         <div class="table-responsive">
@@ -145,6 +200,7 @@
       l10n = getL10N();
       $(document).ready(function () {
       const table = $('#review-history').DataTable({
+          bAutoWidth: false,
           data: reviewData,
           deferRender: true,
           order: [[0, 'desc']],
@@ -179,7 +235,6 @@
                 width: "15%",
                 render: (...review) => {
                     if (review[0] !== null && review[0] !== undefined) {
-                        console.log("rendering item")
                         if (review[2]['ts'] < FLOW_CHANGE_TIME) {
                             if (review[0].quality !== undefined ) {
                                 return `${review[0].quality}`;
@@ -198,7 +253,7 @@
                                 review[0].rejectReasons.forEach(r => {
                                     let rejectionText = l10n[`reject.reason.${r.toLowerCase()}.short`];
                                     if (rejectionText === undefined || rejectionText === "") {
-                                        rejectionText = REJECTION_MAPPINGS[r];    
+                                        rejectionText = REJECTION_MAPPINGS[r];
                                     }
                                     rejections.push(rejectionText);
                                 })
@@ -258,7 +313,6 @@
                 lng,
                 ts,
             } = review;
-        const index = 0;
         if (review.review) {
             const {
                 comment,
@@ -347,6 +401,358 @@
         }
     }
 
+    function renderEditsTable(reviewData) {
+      const tableContainer = document.createElement("div");
+      tableContainer.id = "edit-table";
+      tableContainer.classList.add("table");
+      tableContainer.style.display = "none";
+      tableContainer.insertAdjacentHTML("beforeend",
+        `
+        <div class="table-responsive">
+                <table class="table table-striped table-condensed" id="edit-review-history">
+                </table>
+            </div>
+        `)
+      const ratingNarRef = document.querySelector('wf-rating-bar');
+      const container = ratingNarRef.parentNode.parentNode;
+      container.appendChild(tableContainer);
+
+      l10n = getL10N();
+      $(document).ready(function () {
+        console.log(reviewData);
+      const table = $('#edit-review-history').DataTable({
+          bAutoWidth: false,
+          data: reviewData,
+          deferRender: true,
+          order: [[0, 'desc']],
+          columns: [
+            {
+                data: 'ts',
+                defaultContent: '',
+                title: "Date",
+                width: "15%",
+                render: (ts, type) => {
+                    if (type === "display") {
+                        return getFormattedDate(ts);
+                    }
+                    return ts;
+                }
+            },
+            {
+                data: 'review',
+                title: 'Title',
+                width: "50%",
+                render: (...review) => {
+                    let titleOptions = [];
+                    if (review[2].titleEdits.length > 0) {
+                        review[2].titleEdits.forEach(t => {
+                            titleOptions.push(t.value);
+                        })
+                    } else {
+                        titleOptions.push(review[2].title);
+                    }
+                    return titleOptions.join("<br>");
+                }
+            },
+            {
+                data: 'review',
+                title: 'Type',
+                width: "10%",
+                render: (...review) => {
+                    let types = [];
+                    if (review[2].locationEdits.length > 1) {
+                        types.push("Location");
+                    }
+                    if (review[2].descriptionEdits.length > 0) {
+                        types.push("Description");
+                    } 
+                    if (review[2].titleEdits.length > 0) {
+                        types.push("Title");
+                    }
+                    return types.join(", ");
+                }
+            },
+            {
+                data: 'review',
+                defaultContent: '',
+                title: 'Location',
+                width: "25%",
+                render: (...review) => {
+                    return `<a href="https://intel.ingress.com/?ll=${review[2].lat},${review[2].lng}&z=16" "target="_blank">${review[2].lat},${review[2].lng}</a>`;
+                }
+            },
+            {
+                data: 'id',
+                visible: false
+            },
+          ],
+      });
+
+      $('#edit-review-history').on("click", "", (ev) => {
+            var tr = $(ev.target).closest("tr");
+            var row = table.row(tr);
+            const review = row.data();
+
+            if (row.child.isShown()) {
+                tr.removeClass("shown");
+                row.child.hide();
+            } else {
+                tr.addClass("shown");
+                row.child(editReviewContent(review)).show();
+            }
+        });
+    });
+    }
+
+    const editReviewContent = (review) => {
+      const {
+            id,
+            title,
+            lat,
+            lng,
+            descriptionEdits,
+            locationEdits,
+            titleEdits,
+            ts,
+        } = review;
+    if (review.review) {
+        return `<div class="panel panel-default review-details">
+          <div class="panel-heading">Edit Review</div>
+          <div class="panel-body">
+              <div class="row">
+                <div class="col-xs-12 col-sm-8" style="float: left; padding: 5px;">
+                  <dl class="dl-horizontal">
+                    ${getDD("Location", getIntelLink(lat, lng, `Open in Intel`))}
+                    ${getDD("Review Date", getFormattedDate(ts, true))}
+                  </dl>
+                  <br>
+                  ${renderEditReviews(descriptionEdits, locationEdits, titleEdits, review.review)}
+                </div>
+              </div>
+            </div>
+          </div>`;
+        } else {
+          return `<div class="panel panel-default review-details">
+          <div class="panel-heading">Edit Review</div>
+          <div class="panel-body">
+              <div class="row">
+                <div class="col-xs-12 col-sm-8" style="float: left; padding: 5px;">
+                  ${getDD("Location", getIntelLink(lat, lng, `Open in Intel`))}
+                  ${getDD("Review Date", getFormattedDate(ts, true))}
+                  <dt class="bbold">Review</dt><dd>Skipped/Timed Out</dd>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }
+    }
+
+    function renderEditReviews(descriptionEdits, locationEdits, titleEdits, review) {
+        const {
+            descriptionUnable,
+            locationUnable,
+            titleUnable,
+            selectedDescriptionHash,
+            selectedLocationHash,
+            selectedTitleHash,
+        } = review;
+        let html = ``;
+        if (titleEdits.length > 0) {
+            html += `<dt class="bbold">Title Edits</dt>${renderSingleEditType(titleEdits, titleUnable, selectedTitleHash)}<br>`;
+        }
+        if (descriptionEdits.length > 0) {
+            html += `<dt class="bbold">Description Edits</dt>${renderSingleEditType(descriptionEdits, descriptionUnable, selectedDescriptionHash)}<br>`;
+        }
+        if (locationEdits.length > 1) {
+            html += `<dt class="bbold">Location Edits</dt>${renderSingleEditType(locationEdits, locationUnable, selectedLocationHash)}<br>`;
+        }
+        return html;
+    }
+
+    function renderSingleEditType(editList, unable, selectedHash) {
+        let rows = [];
+        editList.forEach(e => {
+            let selected = '❌';
+            if (e.hash == selectedHash) {
+                selected = '✔️';
+            }
+            if (unable) {
+                selected = "IDK";
+            }
+            let content = e.value;
+            rows.push(`<tr><td class="text-center">${selected}</td><td class="text-center">${content}</td></tr>`);
+        });
+        return `
+        <table class="table table-condensed scores">
+          <thead>
+              <tr>
+                  <th class="text-center">Selected</th>
+                  <th class="text-center">Content</th>
+              </tr>
+          </thead>
+          <tbody class="review-list">
+                ${rows.join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function renderPhotosTable(reviewData) {
+        console.log("history table click here");
+      const tableContainer = document.createElement("div");
+      tableContainer.id = "photo-table";
+      tableContainer.classList.add("table");
+      tableContainer.style.display = "none";
+      tableContainer.insertAdjacentHTML("beforeend",
+        `
+        <div class="table-responsive">
+                <table class="table table-striped table-condensed" id="photo-review-history">
+                </table>
+            </div>
+        `)
+      const ratingNarRef = document.querySelector('wf-rating-bar');
+      const container = ratingNarRef.parentNode.parentNode;
+      container.appendChild(tableContainer);
+
+      l10n = getL10N();
+      $(document).ready(function () {
+      const table = $('#photo-review-history').DataTable({
+          bAutoWidth: false,
+          data: reviewData,
+          deferRender: true,
+          order: [[0, 'desc']],
+          columns: [
+            {
+                data: 'ts',
+                defaultContent: '',
+                title: "Date",
+                width: "7%",
+                render: (ts, type) => {
+                    if (type === "display") {
+                        return getFormattedDate(ts);
+                    }
+                    return ts;
+                }
+            },
+            {
+                data: 'title',
+                title: 'Title',
+                width: "16%"
+            },
+            {
+                data: 'review',
+                title: 'Photo Count',
+                width: "16%",
+                render: (...review) => {
+                    if(review[2].newPhotos) {
+                        return `${review[2].newPhotos.length}`;
+                    }
+                }
+            },
+            {
+                data: 'review',
+                title: 'Accepted',
+                width: "16%",
+                render: (...review) => {
+                    if (!review[2].review) {
+                        return "N/A";
+                    }
+                    if(review[2].newPhotos) {
+                        return `${review[2].review.acceptPhotos.length} / ${review[2].newPhotos.length}`;
+                    } else {
+                        return "1";
+                    }
+                }
+            },
+            {
+                data: 'review',
+                defaultContent: '',
+                title: 'Location',
+                width: "15%",
+                render: (...review) => {
+                    return `<a href="https://intel.ingress.com/?ll=${review[2].lat},${review[2].lng}&z=16" "target="_blank">${review[2].lat},${review[2].lng}</a>`;
+                }
+            },
+            {
+                data: 'id',
+                visible: false
+            },
+          ],
+      });
+
+      $('#photo-review-history').on("click", "", (ev) => {
+            var tr = $(ev.target).closest("tr");
+            var row = table.row(tr);
+            const review = row.data();
+
+            if (row.child.isShown()) {
+                tr.removeClass("shown");
+                row.child.hide();
+            } else {
+                tr.addClass("shown");
+                row.child(photoReviewContent(review)).show();
+            }
+        });
+    });
+    }
+
+    const photoReviewContent = (review) => {
+      const {
+            id,
+            title,
+            lat,
+            lng,
+            ts,
+        } = review;
+    if (review.review) {
+        let images = [`<div class="outer">`];
+        review.newPhotos.forEach(p => {
+            if (review.review.acceptPhotos.includes(p.hash)) {
+                images.push(`<div class="container"><a target="${getTarget("images")}" href="${p.value}=s0">
+                    <img src="${p.value}" class="image" alt="${title}">
+                    </a><div class="overlay-accept">Accepted</div></div>`);
+            } else if (review.review.rejectPhotos.includes(p.hash)) {
+                images.push(`<div class="container"><a target="${getTarget("images")}" href="${p.value}=s0">
+                    <img src="${p.value}" class="image" alt="${title}">
+                    </a><div class="overlay-reject">Rejected</div></div>`);
+            } else {
+                images.push(`<div class="container"><a target="${getTarget("images")}" href="${p.value}=s0">
+                    <img src="${p.value}" class="image" alt="${title}">
+                    </a><div class="overlay-report">Reported</div></div>`);
+            }
+        })
+        images.push(`</div>`);
+        return `<div class="panel panel-default review-details">
+          <div class="panel-heading">Photo Review</div>
+          <div class="panel-body">
+              ${images.join('')}
+              <div class="row">
+                <div class="col-xs-12 col-sm-8" style="float: left; padding: 5px;">
+                  <dl class="dl-horizontal">
+                    ${getDD("Location", getIntelLink(lat, lng, `Open in Intel`))}
+                    ${getDD("Review Date", getFormattedDate(ts, true))}
+                  </dl>
+                  <br>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        } else {
+          return `<div class="panel panel-default review-details">
+          <div class="panel-heading">Photo Review</div>
+          <div class="panel-body">
+              <div class="row">
+                <div class="col-xs-12 col-sm-8" style="float: left; padding: 5px;">
+                  ${getDD("Location", getIntelLink(lat, lng, `Open in Intel`))}
+                  ${getDD("Review Date", getFormattedDate(ts, true))}
+                  <dt class="bbold">Review</dt><dd>Skipped/Timed Out</dd>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        }
+    }
+
     const getDD = (term, definition) =>
         definition ? `<dt class="bbold">${term}</dt><dd>${definition}</dd>` : "";;
 
@@ -384,7 +790,7 @@
         if (review['ts'] < FLOW_CHANGE_TIME) {
             if (!review || typeof review === "string" || !review.quality) {
                 return "";
-            }   
+            }
             return `
             <table class="table table-condensed scores">
               <thead>
@@ -414,7 +820,10 @@
             return "";
         } else if (!review.quality) {
             let rejections = ['❌ Rejected for:'];
-            review.rejectReasons.forEach(r => {
+            if (review["duplicate"]) {
+                rejections.push("duplicate");
+            } else {
+                review.rejectReasons.forEach(r => {
                 let rejectionText = l10n[`reject.reason.${r.toLowerCase()}.short`];
                 if (rejectionText === undefined || rejectionText === "") {
                     if (r in REJECTION_MAPPINGS) {
@@ -425,6 +834,7 @@
                 }
                 rejections.push(rejectionText);
             })
+            }
             return rejections.join("<br />");
         } else {
             return `
@@ -566,6 +976,18 @@
 
     (() => {
       const css = `
+              div.panel-heading {
+                font-weight: bold;
+                font-size: 18px;
+                color: #ff4713;
+              }
+
+              .dark div.panel-heading {
+                font-weight: bold;
+                font-size: 18px;
+                color: #20B8E3;
+              }
+              
               dt.bbold {
                 font-weight: bold;
                 color: #ff4713;
@@ -600,7 +1022,9 @@
                 font-weight: normal;
                 text-align: left;
                 white-space: nowrap;
-                color: #eee;
+                .dark & {
+                   color: #eee;
+                }
               }
               div.dataTables_wrapper div.dataTables_length select {
                 width: 75px;
@@ -613,7 +1037,9 @@
                 font-weight: normal;
                 white-space: nowrap;
                 text-align: left;
-                color: #eee;
+                .dark & {
+                   color: #eee;
+                }
               }
               div.dataTables_wrapper div.dataTables_filter input {
                 margin-left: 0.5em;
@@ -638,12 +1064,18 @@
                 text-align: center;
                 text-decoration: none !important;
                 cursor: pointer;
-                color: #eee !important;
+                .dark & {
+                   color: #eee !important;
+                }
+                color: #5b5b5b !important;
                 border: 1px solid transparent;
                 border-radius: 2px;
               }
               .dataTables_wrapper .dataTables_paginate .paginate_button.current, .dataTables_wrapper .dataTables_paginate .paginate_button.current:hover {
-                color: #eee !important;
+                .dark & {
+                   color: #eee !important;
+                }
+                color: #5b5b5b !important;
                 border: 1px solid rgba(0, 0, 0, 0.3);
                 background-color: rgba(230, 230, 230, 0.1);
                 background: -webkit-gradient(linear, left top, left bottom, color-stop(0%, rgba(230, 230, 230, 0.1)), color-stop(100%, rgba(0, 0, 0, 0.1)));
@@ -760,7 +1192,9 @@
               }
               table.dataTable thead .sorting_asc_disabled:after,
               table.dataTable thead .sorting_desc_disabled:after {
-                color: #eee;
+                .dark & {
+                   color: #eee;
+                }
               }
 
               div.dataTables_scrollHead table.dataTable {
@@ -1103,7 +1537,95 @@
               .shown .review-actions .toggle-details::before {
                 content: '-';
                 background-color: #d33333;
-              }`;
+              }
+
+                .outer {
+                  display: flex;
+                  justify-content: center;
+                  flex-direction: row;
+                  position: relative;
+                }
+
+              .container {
+                width: auto;
+                min-width: 300px;
+                  position: relative;
+                  display: flex;
+                  padding: 5px;
+                }
+
+            .image {
+              width: auto;
+              height: 100%;
+              display: flex;
+            }
+
+              .overlay-reject {
+                  position: absolute;
+                  bottom: 0;
+                  background: rgb(0, 0, 0);
+                  background: rgba(0, 0, 0, 0.7); /* Black see-through */
+                  width: auto;
+                  opacity:1;
+                  color: #ff0000;
+                  font-size: 20px;
+                  padding: 20px;
+                  text-align: center;
+                }
+
+                .overlay-accept {
+                  position: absolute;
+                  bottom: 0;
+                  background: rgb(0, 0, 0);
+                  background: rgba(0, 0, 0, 0.7); /* Black see-through */
+                  width: auto;
+                  opacity:1;
+                  color: #21913a;
+                  font-size: 20px;
+                  padding: 20px;
+                  text-align: center;
+                }
+
+                .overlay-report {
+                  position: absolute;
+                  bottom: 0;
+                  background: rgb(0, 0, 0);
+                  background: rgba(255, 0, 0, 0.5); /* red see-through */
+                  width: auto;
+                  opacity:1;
+                  color: #000000;
+                  font-size: 20px;
+                  padding: 20px;
+                  text-align: center;
+                }
+
+                .wayfarerns__button {
+                background-color: #e5e5e5;
+                border: none;
+                color: #ff4713;
+                padding: 10px 10px;
+                margin: 10px;
+                border-radius: .375rem;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 16px;
+            }
+
+            .wayfarerns__button:hover {
+                background-color: #bdbbbb;
+                transition: 0.2s;
+            }
+
+            .dark .wayfarerns__button {
+                background-color: #404040;
+                color: #20B8E3;
+            }
+
+            .dark .wayfarerns__button:hover {
+                background-color: #707070;
+                transition: 0.2s;
+            }`;
         const style = document.createElement('style');
         style.type = 'text/css';
         style.innerHTML = css;

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Nomination Streetview
-// @version      0.3.9
+// @version      0.4.1
 // @description  Add Streetview to selected nomination
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-streetview.user.js
@@ -8,7 +8,7 @@
 // @match        https://wayfarer.nianticlabs.com/*
 // ==/UserScript==
 
-// Copyright 2022 tehstone
+// Copyright 2024 tehstone, Tntnnbltn
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -31,7 +31,7 @@
 
 (function() {
 	let tryNumber = 10;
-    const nomCache = {};
+    let nomCache = {};
     let intelLink = null;
 
 	/**
@@ -62,8 +62,8 @@
             return;
         }
 
-        json.result.nominations.forEach(nomination => { nomCache[nomination.imageUrl] = nomination; })
-        const list = document.getElementsByTagName('app-nominations-list')[0];
+        nomCache = json.result;
+        const list = document.getElementsByTagName('app-submissions-list')[0];
         list.addEventListener('click', handleNominationClick);
     }
 
@@ -80,9 +80,16 @@
     });
 
     function handleNominationClick(e) {
-        awaitElement(() => e.target.closest('app-nominations-list-item'))
+        awaitElement(() => e.target.closest('app-submissions-list-item'))
             .then((ref) => {
-                const nom = nomCache[ref.querySelector('img').src];
+                const img = ref.querySelector('img').src;
+                let nom = null;
+                for (const nomination of nomCache.submissions) {
+                    if (nomination.imageUrl === img || (nomination.poiData && nomination.poiData.imageUrl === img)) {
+                        nom = nomination;
+                        break;
+                    }
+                }
                 addStreetView(nom);
                 addCoordinates(nom);
                 const matCnt = document.querySelector('mat-sidenav-content');
@@ -94,21 +101,24 @@
             });
     }
 
-	function addCoordinates(selected) {
-        const { lat, lng, city, state } = selected;
-        awaitElement(() => document.querySelector("app-nominations app-details-pane p"))
-            .then((locationP) => {
-                const coordinates = `${lat},${lng}`;
-                const newText = `${city} ${state} (${coordinates})`;
-                locationP.innerText = newText;
-                locationP.style.cursor = 'pointer';
-                locationP.title = 'Copy coordinates to clipboard';
-                locationP.onclick = function() {
-                    navigator.clipboard.writeText(coordinates);
-                }
-            });
+    function addCoordinates(selected) {
 
-        awaitElement(() => document.querySelector("app-nominations app-details-pane h4"))
+        const lat = selected.poiData?.lat || selected.lat;
+        const lng = selected.poiData?.lng || selected.lng;
+
+        awaitElement(() => document.querySelector("app-submissions app-details-pane p"))
+            .then((locationP) => {
+            const coordinates = `${lat},${lng}`;
+            const newText = `${selected.city} ${selected.state} (${coordinates})`;
+            locationP.innerText = newText;
+            locationP.style.cursor = 'pointer';
+            locationP.title = 'Copy coordinates to clipboard';
+            locationP.onclick = function() {
+                navigator.clipboard.writeText(coordinates);
+            }
+        });
+
+        awaitElement(() => document.querySelector("app-submissions app-details-pane h4"))
             .then((titleP) => {
                 if (intelLink === null) {
                 intelLink = document.createElement('a');

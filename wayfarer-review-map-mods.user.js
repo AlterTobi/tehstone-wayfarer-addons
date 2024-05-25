@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Map Mods
-// @version      0.9.0
+// @version      0.9.1
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-map-mods.user.js
@@ -9,7 +9,7 @@
 // @run-at       document-start
 // ==/UserScript==
 
-// Copyright 2023 tehstone, bilde
+// Copyright 2024 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -138,7 +138,9 @@ function init() {
             .then((ref) => {
                 addMapMods();
                 addSettings();
-            })
+            }).catch(() => {
+                return;
+            }); 
     };
 
     function addMapMods() {
@@ -1343,8 +1345,8 @@ function init() {
 
         // hilbert space-filling curve
         // based on http://blog.notdot.net/2009/11/Damn-Cool-Algorithms-Spatial-indexing-with-Quadtrees-and-Hilbert-Curves
-        // note: rather then calculating the final integer hilbert position, we just return the list of quads
-        // this ensures no precision issues whth large orders (S3 cell IDs use up to 30), and is more
+        // note: rather than calculating the final integer hilbert position, we just return the list of quads
+        // this ensures no precision issues with large orders (S3 cell IDs use up to 30), and is more
         // convenient for pulling out the individual bits as needed later
         var pointToHilbertQuadList = function(x, y, order, face) {
             var hilbertMap = {

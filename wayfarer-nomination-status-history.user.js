@@ -1,15 +1,16 @@
 // ==UserScript==
 // @name         Wayfarer Nomination Status History
-// @version      0.8.8
+// @version      1.3.3
 // @description  Track changes to nomination status
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-status-history.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons/
 // @match        https://wayfarer.nianticlabs.com/*
 // @run-at       document-start
+// @grant        GM_info
 // ==/UserScript==
 
-// Copyright 2022 tehstone, bilde
+// Copyright 2024 tehstone, bilde, Tntnnbltn
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -45,27 +46,34 @@
         UPGRADE: 'Upgraded'
     };
     const savedFields = ['id', 'type', 'day', 'nextUpgrade', 'upgraded', 'status', 'isNianticControlled', 'canAppeal', 'isClosed', 'canHold', 'canReleaseHold'];
-    const nomDateSelector = 'app-nominations app-details-pane app-nomination-tag-set + span';
+    const nomDateSelector = 'app-submissions app-details-pane app-submission-tag-set + span';
+    const strictClassificationMode = true;
+
+    const eV1ProcessingStateVersion = 22;
+    const eV1CutoffParseErrors = 22;
+    const eV1CutoffEverything = 21;
+
+    let errorReportingPrompt = !localStorage.hasOwnProperty('wfnshStopAskingAboutCrashReports');
     const importCache = {};
     let ready = false;
     let userHash = 0;
 
     // https://github.com/bryc/code/blob/master/jshash/experimental/cyrb53.js
-    const cyrb53 = function(str, seed = 0) {
+    const cyrb53 = function (str, seed = 0) {
         let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
         for (let i = 0, ch; i < str.length; i++) {
             ch = str.charCodeAt(i);
             h1 = Math.imul(h1 ^ ch, 2654435761);
             h2 = Math.imul(h2 ^ ch, 1597334677);
         }
-        h1 = Math.imul(h1 ^ (h1>>>16), 2246822507) ^ Math.imul(h2 ^ (h2>>>13), 3266489909);
-        h2 = Math.imul(h2 ^ (h2>>>16), 2246822507) ^ Math.imul(h1 ^ (h1>>>13), 3266489909);
-        return 4294967296 * (2097151 & h2) + (h1>>>0);
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        return 4294967296 * (2097151 & h2) + (h1 >>> 0);
     };
 
     // Overwrite the open method of the XMLHttpRequest.prototype to intercept the server calls
     (function (open) {
-        XMLHttpRequest.prototype.open = function(method, url) {
+        XMLHttpRequest.prototype.open = function (method, url) {
             const args = this;
             if (url == '/api/v1/vault/manage' && method == 'GET') {
                 this.addEventListener('load', handleXHRResult(handleNominations), false);
@@ -81,11 +89,11 @@
 
     // Overwrite the send method of the XMLHttpRequest.prototype to intercept POST data
     (function (send) {
-        XMLHttpRequest.prototype.send = function(dataText) {
+        XMLHttpRequest.prototype.send = function (dataText) {
             try {
                 const data = JSON.parse(dataText);
                 const xhr = this;
-                this.addEventListener('load', handleXHRResult(function(result) {
+                this.addEventListener('load', handleXHRResult(function (result) {
                     switch (xhr.responseURL) {
                         case window.origin + '/api/v1/vault/manage/hold':
                             handleHold(data, result);
@@ -101,14 +109,14 @@
                             break;
                     }
                 }), false);
-            } catch (err) {}
+            } catch (err) { }
             send.apply(this, arguments);
         };
     })(XMLHttpRequest.prototype.send);
 
     // Perform validation on result to ensure the request was successful before it's processed further.
     // If validation passes, passes the result to callback function.
-    const handleXHRResult = callback => function(e) {
+    const handleXHRResult = callback => function (e) {
         try {
             const response = this.response;
             const json = JSON.parse(response);
@@ -167,88 +175,126 @@
         if (socialProfile.email) userHash = cyrb53(socialProfile.email);
     };
 
-    const handleNominations = ({ nominations }) => {
+    const handleNominations = ({ submissions }) => {
         addNotificationDiv();
-        addImportButton(nominations);
         // Check for changes in nomination list.
-        getIDBInstance().then(db => checkNominationChanges(db, nominations)).catch(console.error);
+        getIDBInstance().then(db => checkNominationChanges(db, submissions)).catch(console.error).then(async () => {
+            // Delete old PEIID
+            let usedLegacyEmailImport = false;
+            if (localStorage.hasOwnProperty('wfnshProcessedEmailIDs')) {
+                localStorage.removeItem('wfnshProcessedEmailIDs');
+                usedLegacyEmailImport = true;
+            }
+            // Attach to email import API
+            const windowRef = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+            if (windowRef.wft_plugins_api && windowRef.wft_plugins_api.emailImport) {
+                console.log('Attaching event handler to Email Import API');
+                const epInstance = new EmailProcessor(submissions);
+                console.log('Starting to process stored emails for history events...');
+                const start = new Date();
+                await windowRef.wft_plugins_api.emailImport.prepare();
+                await epInstance.open();
+                for await (const email of windowRef.wft_plugins_api.emailImport.iterate()) {
+                    await epInstance.importEmail(email);
+                }
+                await epInstance.close(false);
+                windowRef.wft_plugins_api.emailImport.addListener('wayfarer-nomination-status-history.user.js', {
+                    onImportStarted: async () => await epInstance.open(),
+                    onImportCompleted: async () => await epInstance.close(true),
+                    onEmailImported: async email => await epInstance.importEmail(email)
+                });
+                console.log(`Imported stored history events from email cache in ${Date.now() - start} msec.`);
+                if (usedLegacyEmailImport) {
+                    alert('Nomination Status History has updated to a new version, and due to a breaking change, it is highly recommended that all Wayfarer emails are re-imported. By default, this will happen automatically the next time you import your email history.');
+                }
+            } else if (usedLegacyEmailImport) {
+                alert('Nomination Status History has updated to a new version that drastically changes how email imports are handled internally. You are receiving this notification because you have previously used this feature. Please install the Email Import API from wayfarer.tools to continue using the email importer feature.');
+            }
+        });
         // Add event listener for each element in the nomination list, so we can display the history box for nominations on click.
-        awaitElement(() => document.querySelector('app-nominations-list')).then(ref => {
+        awaitElement(() => document.querySelector('app-submissions-list')).then(ref => {
             // Each item in the list only has the image URL for unique identification. Map these to nomination IDs.
             const nomCache = {};
             let box = null;
-            nominations.forEach(nom => { nomCache[nom.imageUrl] = nom.id; });
+            submissions.forEach(nom => { nomCache[nom.imageUrl] = nom.id; });
             ref.addEventListener('click', e => {
-                const item = e.target.closest('app-nominations-list-item');
-                if (item) {
-                    // Get the nomination ID from the previously built map.
-                    const nomId = nomCache[item.querySelector('img').src];
-                    awaitElement(() => document.querySelector(nomDateSelector)).then(ref => {
-                        // Ensure there is only one selection box.
-                        if (box) box.parentElement.removeChild(box);
-                        box = document.createElement('div');
-                        box.classList.add('wfnshDropdown');
-                        const leftBox = document.createElement('a');
-                        leftBox.classList.add('wfnshDDLeftBox');
-                        leftBox.textContent = '\u25b6';
-                        box.appendChild(leftBox);
-                        const rightBox = document.createElement('div');
-                        rightBox.classList.add('wfnshDDRightBox');
-                        box.appendChild(rightBox);
-
-                        const oneLine = document.createElement('p');
-                        oneLine.classList.add('wfnshOneLine');
-                        rightBox.appendChild(oneLine);
-                        const textbox = document.createElement('div');
-                        textbox.classList.add('wfnshInner');
-                        rightBox.appendChild(textbox);
-
-                        let collapsed = true;
-                        box.addEventListener('click', e => {
-                            e.preventDefault();
-                            oneLine.style.display = collapsed ? 'none' : 'block';
-                            textbox.style.display = collapsed ? 'block' : 'none';
-                            leftBox.textContent = collapsed ? '\u25bc' : '\u25b6';
-                            collapsed = !collapsed;
-                            return false;
-                        });
-
-                        ref.parentNode.appendChild(box);
-                        // Don't populate the dropdown until the nomination change detection has run successfully.
-                        // That process sets ready = true when done. If it was already ready, then this will
-                        // continue immediately. When ready, that means the previous connection was closed, so we
-                        // open a new connection here to fetch data for the selected nomination.
-                        awaitElement(() => ready).then(() => getIDBInstance()).then(db => {
-                            const objectStore = db.transaction([OBJECT_STORE_NAME], "readonly").objectStore(OBJECT_STORE_NAME);
-                            const getNom = objectStore.get(nomId);
-                            getNom.onsuccess = () => {
-                                const { result } = getNom;
-                                // Create an option for initial nomination; this may not be stored in the IDB history,
-                                // so we need to handle this as a special case here.
-                                if (!result.statusHistory.length || result.statusHistory[0].status !== 'NOMINATED') {
-                                    oneLine.textContent = result.day + ' - Nominated';
-                                    const nomDateLine = document.createElement('p');
-                                    nomDateLine.textContent = result.day + ' - Nominated';
-                                    textbox.appendChild(nomDateLine);
-                                }
-                                // Then, add options for each entry in the history.
-                                let previous = null;
-                                result.statusHistory.forEach(({ timestamp, status, verified }) => {
-                                    addEventToHistoryDisplay(box, timestamp, status, verified, previous);
-                                    previous = status;
-                                });
-                                // Clean up when we're done.
-                                db.close();
-                            }
-                        });
+                // Ensure there is only one selection box.
+                var elements = document.querySelectorAll('.wfnshDropdown');
+                if (elements.length > 0) {
+                    elements.forEach(function(element) {
+                        element.remove();
                     });
+                }
+                const item = e.target.closest('app-submissions-list-item');
+                if (item) {
+                    // hopefully this index is constant and never changes? i don't see a better way to access it
+                    const nomId = item["__ngContext__"][22].id
+                    if (nomId) {
+                        awaitElement(() => document.querySelector(nomDateSelector)).then(ref => {
+                            box = document.createElement('div');
+                            box.classList.add('wfnshDropdown');
+                            const leftBox = document.createElement('a');
+                            leftBox.classList.add('wfnshDDLeftBox');
+                            leftBox.textContent = '\u25b6';
+                            box.appendChild(leftBox);
+                            const rightBox = document.createElement('div');
+                            rightBox.classList.add('wfnshDDRightBox');
+                            box.appendChild(rightBox);
+
+                            const oneLine = document.createElement('p');
+                            oneLine.classList.add('wfnshOneLine');
+                            rightBox.appendChild(oneLine);
+                            const textbox = document.createElement('div');
+                            textbox.classList.add('wfnshInner');
+                            rightBox.appendChild(textbox);
+
+                            let collapsed = true;
+                            box.addEventListener('click', e => {
+                                e.preventDefault();
+                                oneLine.style.display = collapsed ? 'none' : 'block';
+                                textbox.style.display = collapsed ? 'block' : 'none';
+                                leftBox.textContent = collapsed ? '\u25bc' : '\u25b6';
+                                collapsed = !collapsed;
+                                return false;
+                            });
+
+                            ref.parentNode.appendChild(box);
+                            // Don't populate the dropdown until the nomination change detection has run successfully.
+                            // That process sets ready = true when done. If it was already ready, then this will
+                            // continue immediately. When ready, that means the previous connection was closed, so we
+                            // open a new connection here to fetch data for the selected nomination.
+                            awaitElement(() => ready).then(() => getIDBInstance()).then(db => {
+                                const objectStore = db.transaction([OBJECT_STORE_NAME], "readonly").objectStore(OBJECT_STORE_NAME);
+                                const getNom = objectStore.get(nomId);
+                                getNom.onsuccess = () => {
+                                    const { result } = getNom;
+                                    // Create an option for initial nomination; this may not be stored in the IDB history,
+                                    // so we need to handle this as a special case here.
+                                    if (!result.statusHistory.length || result.statusHistory[0].status !== 'NOMINATED') {
+                                        oneLine.textContent = result.day + ' - Nominated';
+                                        const nomDateLine = document.createElement('p');
+                                        nomDateLine.textContent = result.day + ' - Nominated';
+                                        textbox.appendChild(nomDateLine);
+                                    }
+                                    // Then, add options for each entry in the history.
+                                    let previous = null;
+                                    result.statusHistory.forEach(({ timestamp, status, verified, email }) => {
+                                        addEventToHistoryDisplay(box, timestamp, status, verified, email, previous);
+                                        previous = status;
+                                    });
+                                    // Clean up when we're done.
+                                    db.close();
+                                }
+                            });
+                        });
+                    }
                 }
             });
         });
     };
 
     // Adds a nomination history entry to the given history display <select>.
-    const addEventToHistoryDisplay = (box, timestamp, status, verified, previous) => {
+    const addEventToHistoryDisplay = (box, timestamp, status, verified, email, previous) => {
         if (status === 'NOMINATED' && !!previous) {
             if (previous === 'HELD') {
                 status = 'Hold released';
@@ -260,15 +306,29 @@
         // Format the date as UTC as this is what Wayfarer uses to display the nomination date.
         // Maybe make this configurable to user's local time later?
         const date = new Date(timestamp);
-        const dateString = `${date.getUTCFullYear()}-${('0'+(date.getUTCMonth()+1)).slice(-2)}-${('0'+date.getUTCDate()).slice(-2)}`;
-        const text = `${dateString} - ${stateMap.hasOwnProperty(status) ? stateMap[status] : status}`;
+        const dateString = `${date.getUTCFullYear()}-${('0' + (date.getUTCMonth() + 1)).slice(-2)}-${('0' + date.getUTCDate()).slice(-2)}`;
+        const text = `${dateString} - `;
+        const stateText = stateMap.hasOwnProperty(status) ? stateMap[status] : status;
 
         const lastLine = box.querySelector('.wfnshOneLine');
-        lastLine.textContent = text;
+        lastLine.textContent = text + stateText;
         const line = document.createElement('p');
+        line.appendChild(document.createTextNode(text));
         if (verified) lastLine.classList.add('wfnshVerified');
         else if (lastLine.classList.contains('wfnshVerified')) lastLine.classList.remove('wfnshVerified');
-        line.textContent = text;
+
+        const windowRef = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+        if (email && windowRef.wft_plugins_api && windowRef.wft_plugins_api.emailImport) {
+            const aDisplay = document.createElement('a');
+            aDisplay.textContent = stateText;
+            aDisplay.addEventListener('click', e => {
+                e.stopPropagation();
+                windowRef.wft_plugins_api.emailImport.get(email).then(eml => eml.display());
+            });
+            line.appendChild(aDisplay);
+        } else {
+            line.appendChild(document.createTextNode(stateText));
+        }
         if (verified) line.classList.add('wfnshVerified');
         const textbox = box.querySelector('.wfnshInner');
         textbox.appendChild(line);
@@ -320,7 +380,7 @@
     });
 
     // Checks for nomination changes. Name should be obvious tbh
-    const checkNominationChanges = (db, nominations) => {
+    const checkNominationChanges = (db, submissions) => {
         console.log("Checking for nomination changes...");
 
         const tx = db.transaction([OBJECT_STORE_NAME], "readwrite");
@@ -341,39 +401,50 @@
             // Count number of nominations that were submitted by the current user by matching userHash.
             const userNominationCount = getList.result.reduce((prev, cur) => prev + (cur.hasOwnProperty('userHash') && cur.userHash == userHash ? 1 : 0), 0);
             // Use this count to determine whether any nominations are missing from Wayfarer currently, that are stored in our cache in IDB.
-            if (nominations.length < userNominationCount) {
-                const missingCount = userNominationCount - nominations.length;
+            if (submissions.length < userNominationCount) {
+                const missingCount = userNominationCount - submissions.length;
                 createNotification(`${missingCount} of ${userNominationCount} nominations are missing!`, "red");
             }
 
-            let newCount = 0;
+            let newCount = {
+                NOMINATION: 0,
+                EDIT_TITLE: 0,
+                EDIT_DESCRIPTION: 0,
+                EDIT_LOCATION: 0,
+                PHOTO: 0
+            }
             let importCount = 0;
-            nominations.forEach(nom => {
+            submissions.forEach(nom => {
                 if (nom.id in savedNominations) {
                     // Nomination ALREADY EXISTS in IDB
                     const saved = savedNominations[nom.id];
                     const history = saved.statusHistory;
+                    const title = nom.title || (nom.poiData && nom.poiData.title) || "[Title]";
+                    const icon = createNotificationIcon(nom.type);
                     // Add upgrade change status if the nomination was upgraded.
                     if (nom.upgraded && !saved.upgraded) {
                         history.push({ timestamp: Date.now(), status: 'UPGRADE' });
-                        createNotification(`${nom.title} was upgraded!`, 'blue');
+                        createNotification(`${title} was upgraded!`, 'blue', icon);
                     }
                     // Add status change if the current status is different to the stored one.
                     if (nom.status != saved.status) {
                         history.push({ timestamp: Date.now(), status: nom.status });
                         // For most status updates, it's also desired to send a notification to the user.
-                        if (nom.status !== 'HELD' && saved.status !== 'HELD') {
+                        if (nom.status !== 'HELD' && !(nom.status === 'NOMINATED' && saved.status === 'HELD')) {
                             const { text, color } = getStatusNotificationText(nom.status);
-                            createNotification(`${nom.title} ${text}`, color);
+                            createNotification(`${title} ${text}`, color, icon);
                         }
                     }
-                    // Filter out irrelevant fields that we don't need store.
+                    // Filter out irrelevant fields that we don't need to store.
                     // Only retain fields from savedFields before we put it in IDB
                     const toSave = filterObject(nom, savedFields);
+                    if (nom.poiData) {
+                        toSave.poiData = { ...nom.poiData };
+                    }
                     objectStore.put({ ...toSave, statusHistory: history, userHash });
                 } else {
                     // Nomination DOES NOT EXIST in IDB yet
-                    newCount++;
+                    newCount[nom.type]++;
                     // Maybe it has WFES history? Check. This returns an empty array if not.
                     const history = importWFESHistoryFor(nom.id);
                     if (history.length) importCount++;
@@ -387,23 +458,35 @@
                     }
                     // Filter out irrelevant fields that we don't need store.
                     // Only retain fields from savedFields before we put it in IDB
-                    const toSave = filterObject(nom, savedFields);
+                    let toSave = filterObject(nom, savedFields);
+                    if (nom.poiData) {
+                        toSave.poiData = { ...nom.poiData };
+                    }
                     objectStore.put({ ...toSave, statusHistory: history, userHash });
                 }
             });
             // Commit all changes. (And close the database connection due to tx.oncomplete.)
             tx.commit();
-            if (newCount > 0) {
-                let suffix = '';
-                if (newCount > 1) {
-                    suffix = 's';
+            const actionTypes = ['NOMINATION', 'EDIT_TITLE', 'EDIT_DESCRIPTION', 'EDIT_LOCATION', 'PHOTO'];
+
+            const messageTypeMapping = {
+                'NOMINATION': (importCount) => newCount.NOMINATION > 0 ?
+                (importCount > 0 ?
+                 `Found ${newCount.NOMINATION} new nomination${newCount.NOMINATION > 1 ? 's' : ''} in the list, of which ${importCount} had its history imported from WFES Nomination Notify.` :
+                 `Found ${newCount.NOMINATION} new nomination${newCount.NOMINATION > 1 ? 's' : ''} in the list!`) :
+                '',
+                'EDIT_TITLE': () => newCount.EDIT_TITLE > 0 ? `Found ${newCount.EDIT_TITLE} new title edit${newCount.EDIT_TITLE > 1 ? 's' : ''} in the list!` : '',
+                'EDIT_DESCRIPTION': () => newCount.EDIT_DESCRIPTION > 0 ? `Found ${newCount.EDIT_DESCRIPTION} new description edit${newCount.EDIT_DESCRIPTION > 1 ? 's' : ''} in the list!` : '',
+                'EDIT_LOCATION': () => newCount.EDIT_LOCATION > 0 ? `Found ${newCount.EDIT_LOCATION} new location edit${newCount.EDIT_LOCATION > 1 ? 's' : ''} in the list!` : '',
+                'PHOTO': () => newCount.PHOTO > 0 ? `Found ${newCount.PHOTO} new photo${newCount.PHOTO > 1 ? 's' : ''} in the list!` : ''
+            };
+
+            actionTypes.forEach(actionType => {
+                const message = messageTypeMapping[actionType](importCount);
+                if (message) {
+                    createNotification(message, 'gray', createNotificationIcon(actionType));
                 }
-                if (importCount > 0) {
-                    createNotification(`Found ${newCount} new nomination${suffix} in the list, of which ${importCount} had its history imported from WFES Nomination Notify.`, 'green');
-                } else {
-                    createNotification(`Found ${newCount} new nomination${suffix} in the list!`, 'green');
-                }
-            }
+            });
         }
     };
 
@@ -421,7 +504,7 @@
         for (const key in importCache) {
             if (importCache.hasOwnProperty(key) && importCache[key].hasOwnProperty(id) && importCache[key][id].hasOwnProperty('wfesDates')) {
                 // A match was found. Populate the history array.
-                importCache[key][id].wfesDates.forEach(([ date, status ]) => {
+                importCache[key][id].wfesDates.forEach(([date, status]) => {
                     switch (true) {
                         case status !== 'MISSING':
                         case status !== 'NOMINATED' || oldData.length > 0:
@@ -445,6 +528,11 @@
                 text = 'was accepted!';
                 color = 'green';
                 break;
+            case 'NOMINATED':
+                // This is only generated when it used to have a status other than hold
+                text = 'returned to the queue!';
+                color = 'brown';
+                break;
             case 'REJECTED':
                 text = 'was rejected!';
                 color = 'red';
@@ -461,6 +549,10 @@
                 text = 'went into Niantic review!';
                 color = 'blue';
                 break;
+            case 'APPEALED':
+                text = 'was appealed!';
+                color = 'purple';
+                break;
             default:
                 text = `: unknown status: ${status}`;
                 color = 'red';
@@ -468,6 +560,35 @@
         }
         return { text, color };
     };
+
+        const createNotificationIcon = (type) => {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("version", "1.1");
+        svg.setAttribute("viewBox", "0 0 512 512");
+        svg.setAttribute("xml:space", "preserve");
+        svg.setAttribute("width", "20");
+        svg.setAttribute("height", "20");
+        switch (type) {
+            case 'NOMINATION':
+                svg.innerHTML = `<g transform="matrix(5.5202 0 0 5.5202 7.5948 7.5921)"><path d="m45 0c-19.537 0-35.375 15.838-35.375 35.375 0 8.722 3.171 16.693 8.404 22.861l26.971 31.764 26.97-31.765c5.233-6.167 8.404-14.139 8.404-22.861 1e-3 -19.536-15.837-35.374-35.374-35.374zm0 48.705c-8.035 0-14.548-6.513-14.548-14.548s6.513-14.548 14.548-14.548 14.548 6.513 14.548 14.548-6.513 14.548-14.548 14.548z" fill="#ffffff" stroke-linecap="round"/></g>`
+                break;
+            case 'PHOTO':
+                svg.innerHTML = `<path d="m190.39 84.949c-6.6975 5.26e-4 -12.661 4.2407-14.861 10.566l-16.951 48.736h-86.783c-16.463 8e-5 -29.807 13.346-29.807 29.809v221.27c-1.31e-4 17.518 14.201 31.719 31.719 31.719h360.38c19.84 1.8e-4 35.922-16.084 35.922-35.924v-215.54c5.2e-4 -17.307-14.029-31.337-31.336-31.338h-86.865l-16.549-48.605c-2.1787-6.3967-8.1858-10.698-14.943-10.697h-129.92zm224.45 102.69c12.237 5.2e-4 22.156 9.8009 22.156 21.889 3.9e-4 12.088-9.9185 21.888-22.156 21.889-12.238 5.4e-4 -22.161-9.7994-22.16-21.889 7e-4 -12.088 9.9224-21.889 22.16-21.889zm-158.85 30.947c37.042-8.9e-4 67.071 30.028 67.07 67.07-1.9e-4 37.042-30.029 67.069-67.07 67.068-37.041-1.8e-4 -67.07-30.028-67.07-67.068-8.9e-4 -37.041 30.029-67.07 67.07-67.07z" fill="#ffffff" />`;
+                break;
+            case 'EDIT_LOCATION':
+                svg.innerHTML = `<path d="m275.28 191.57-37.927 265.39-182.75-401.92zm182.12 46.046-274.31 38.177-128.26-220.75z" stroke-linecap="round" stroke-linejoin="round" fill="#ffffff" stroke="#ffffff" stroke-width="26.07"/>`;
+                break;
+            case 'EDIT_TITLE':
+                svg.innerHTML = `<path d="m15.116 412.39v84.373h84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m496.66 412.24v84.373h-84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m14.915 100.07v-84.373h84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m496.46 100.22v-84.373h-84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m81.232 82.633v142.8l29.4 1.4004c1.2444-20.844 3.4221-38.112 6.5332-51.801 3.4222-14 7.7775-25.044 13.066-33.133 5.6-8.4 12.291-14.156 20.068-17.268 7.7778-3.4222 16.955-5.1328 27.533-5.1328h42.467v261.33c0 14.311-13.844 21.467-41.533 21.467v27.066h155.4v-27.066c-28 0-42-7.1557-42-21.467v-261.33h42c10.578 0 19.755 1.7106 27.533 5.1328 7.7778 3.1111 14.313 8.8676 19.602 17.268 5.6 8.0889 9.9553 19.133 13.066 33.133 3.4222 13.689 5.7556 30.956 7 51.801l29.4-1.4004v-142.8h-349.54z" fill="#ffffff" />`
+                break;
+            case 'EDIT_DESCRIPTION':
+                svg.innerHTML = `<path d="m15.116 412.39v84.373h84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m496.66 412.24v84.373h-84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m14.915 100.07v-84.373h84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m496.46 100.22v-84.373h-84.373" fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/><path d="m79.133 82.633v27.533c27.689 0 41.533 7.1557 41.533 21.467v249.2c0 14.311-13.844 21.467-41.533 21.467v27.066h182c28.311 0 53.201-2.9561 74.668-8.8672s39.355-15.867 53.666-29.867c14.622-14 25.51-32.667 32.666-56 7.1556-23.333 10.734-52.577 10.734-87.732 0-34.533-3.5788-62.533-10.734-84-7.1556-21.467-18.044-38.111-32.666-49.934-14.311-11.822-32.199-19.756-53.666-23.801-21.467-4.3556-46.357-6.5332-74.668-6.5332h-182zm112.93 36.867h76.533c17.422 0 31.889 2.489 43.4 7.4668 11.822 4.6667 21.156 12.134 28 22.4 7.1556 10.267 12.134 23.644 14.934 40.133 2.8 16.178 4.1992 35.779 4.1992 58.801 0 23.022-1.3992 43.555-4.1992 61.6s-7.778 33.288-14.934 45.732c-6.8444 12.133-16.178 21.467-28 28-11.511 6.2222-25.978 9.334-43.4 9.334h-76.533v-273.47z" fill="#ffffff"/>`
+                break;
+        }
+        return svg;
+    };
+
+
 
     // Returns an copy of obj containing only the keys specified in the keys array.
     const filterObject = (obj, keys) => Object
@@ -483,1648 +604,1110 @@
         }
     };
 
-    const createNotification = (message, color = 'red') => {
+    const createNotification = (message, color = 'red', icon) => {
         const notification = document.createElement('div');
         notification.classList.add('wfnshNotification');
         notification.classList.add('wfnshBg-' + color);
         notification.addEventListener('click', () => notification.parentNode.removeChild(notification));
+
+        const contentWrapper = document.createElement('div');
+        contentWrapper.style.display = 'flex';
+        contentWrapper.style.alignItems = 'center';
         const content = document.createElement('p');
         content.textContent = message;
-        notification.appendChild(content);
+        
+        if (icon) {
+            const iconWrapper = document.createElement('div');
+            iconWrapper.appendChild(icon);
+            iconWrapper.style.width = '30px';
+            contentWrapper.appendChild(iconWrapper);
+        }
+        contentWrapper.appendChild(content);
+        notification.appendChild(contentWrapper);
         awaitElement(() => document.getElementById('wfnshNotify')).then(ref => ref.appendChild(notification));
+        return notification;
     };
 
-    const createBackground = () => {
-        const outer = document.createElement('div');
-        outer.classList.add('wfnshImportBg');
-        document.querySelector('body').appendChild(outer);
-        return outer;
-    };
+    class UnresolvableProcessingError extends Error { constructor(message) { super(message); this.name = 'UnresolvableProcessingError'; } }
+    class NominationMatchingError extends UnresolvableProcessingError { constructor(message) { super(message); this.name = 'NominationMatchingError'; } }
+    class AmbiguousRejectionError extends UnresolvableProcessingError { constructor(message) { super(message); this.name = 'AmbiguousRejectionError'; } }
 
-    const createEmailLoader = () => {
-        const outer = createBackground();
-        const loadingHeader = document.createElement('h2');
-        loadingHeader.textContent = 'Parsing...';
-        const loadingStatus = document.createElement('p');
-        loadingStatus.textContent = 'Please wait';
-        const loadingDiv = document.createElement('div');
-        loadingDiv.classList.add('wfnshImportLoading');
-        loadingDiv.appendChild(loadingHeader);
-        loadingDiv.appendChild(loadingStatus);
-        outer.appendChild(loadingDiv);
-        return {
-            setTitle: text => { loadingHeader.textContent = text },
-            setStatus: text => { loadingStatus.textContent = text },
-            destroy: () => outer.parentNode.removeChild(outer)
-        };
-    };
+    class EmailParsingError extends Error { constructor(message) { super(message); this.name = 'EmailParsingError'; } }
+    class UnknownTemplateError extends EmailParsingError { constructor(message) { super(message); this.name = 'UnknownTemplateError'; } }
+    class MissingDataError extends EmailParsingError { constructor(message) { super(message); this.name = 'MissingDataError'; } }
 
-    const getProcessedEmailIDs = () => localStorage.hasOwnProperty('wfnshProcessedEmailIDs') ? JSON.parse(localStorage.wfnshProcessedEmailIDs) : [];
-
-    const importFromIterator = (nominations, loader, iterator, count, callback) => {
-        getIDBInstance().then(db => {
-            const tx = db.transaction([OBJECT_STORE_NAME], "readonly");
-            const objectStore = tx.objectStore(OBJECT_STORE_NAME);
-            const getList = objectStore.getAll();
-            getList.onsuccess = () => {
-                const history = {};
-                getList.result.forEach(e => { history[e.id] = e.statusHistory });
-                db.close();
-                parseEmails(iterator, count, nominations, history, (n, t) => {
-                    loader.setStatus(`Processing email ${n} of ${t}`);
-                }).then(parsed => {
-                    const merged = mergeEmailChanges(history, parsed.parsedChanges);
-                    const mergeList = Object.keys(merged).map(id => ({ ...merged[id], id }));
-                    mergeList.sort((a, b) => a.title.localeCompare(b.title));
-
-                    let changeCount = 0;
-                    mergeList.forEach(e => { changeCount += e.diffs.length; });
-
-                    loader.destroy();
-                    const outer = createBackground();
-
-                    const inner = document.createElement('div');
-                    inner.classList.add('wfnshImportInner');
-                    outer.appendChild(inner);
-                    const header = document.createElement('h1');
-                    header.textContent = 'Preview email import';
-                    inner.appendChild(header);
-                    const sub = document.createElement('p');
-                    sub.textContent = 'The summary below is a preview of the results of the email import. Please review the changes and click "Import" below to permanently commit the import.';
-                    inner.appendChild(sub);
-                    const btn1 = document.createElement('btn');
-                    btn1.classList.add('wfnshTopButton');
-                    btn1.textContent = `Import ${changeCount} change(s)`;
-                    btn1.addEventListener('click', () => {
-                        outer.parentNode.removeChild(outer);
-                        const loader2 = createEmailLoader();
-                        loader2.setTitle('Importing...');
-                        loader2.setStatus('Please wait');
-                        const processedIDs = getProcessedEmailIDs();
-                        parsed.parsedIDs.forEach(id => {
-                            if (!processedIDs.includes(id)) processedIDs.push(id);
-                        });
-                        parsed.skippedEmails.forEach(({ id }) => {
-                            if (id && !processedIDs.includes(id)) processedIDs.push(id);
-                        });
-                        localStorage.wfnshProcessedEmailIDs = JSON.stringify(processedIDs);
-                        if (callback) callback();
-                        processEmailImport(mergeList, (n, t) => {
-                            loader2.setStatus(`Importing change ${n} of ${t}`);
-                        }).then(() => {
-                            loader2.destroy();
-                        });
-                    });
-                    inner.appendChild(btn1);
-                    const btn2 = document.createElement('btn');
-                    btn2.classList.add('wfnshTopButton');
-                    btn2.classList.add('wfnshCancelButton');
-                    btn2.textContent = 'Cancel import';
-                    btn2.addEventListener('click', () => outer.parentNode.removeChild(outer));
-                    inner.appendChild(btn2);
-
-                    if (parsed.parseFailures.length) {
-                        const failHeader = document.createElement('h3');
-                        failHeader.textContent = `Import failures (${parsed.parseFailures.length})`;
-                        inner.appendChild(failHeader);
-                        parsed.parseFailures.forEach(e => inner.appendChild(renderEmailFailureEntry(e, false)));
-                    }
-
-                    if (mergeList.length) {
-                        const changeHeader = document.createElement('h3');
-                        changeHeader.textContent = `Changes to import (${changeCount})`;
-                        inner.appendChild(changeHeader);
-                        mergeList.forEach(e => inner.appendChild(renderEmailImportEntry(e)));
-                    }
-
-                    if (parsed.skippedEmails.length) {
-                        const skipHeader = document.createElement('h3');
-                        skipHeader.textContent = `Skipped emails (${parsed.skippedEmails.length})`;
-                        inner.appendChild(skipHeader);
-                        parsed.skippedEmails.forEach(e => inner.appendChild(renderEmailFailureEntry(e, true)));
-                    }
-                });
-            };
-        }).catch(e => {
-            loader.setStatus('An error occurred');
-            console.error(e);
-        });
-    };
-
-    const importFromEml = nominations => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.multiple = 'multiple';
-        input.accept = 'message/rfc822,*.eml';
-        input.style.display = 'none';
-        input.addEventListener('change', e => {
-            const loader = createEmailLoader();
-            loader.setTitle('Parsing...');
-            loader.setStatus('Please wait');
-            const fileCount = e.target.files.length;
-            const iterator = async function*() {
-                for (let i = 0; i < fileCount; i++) {
-                    yield {
-                        name: e.target.files[i].name,
-                        contents: await e.target.files[i].text()
-                    };
-                }
-            };
-            importFromIterator(nominations, loader, iterator, fileCount);
-        });
-        document.querySelector('body').appendChild(input);
-        input.click();
-    };
-
-    const importFromGAScript = nominations => {
-        const outer = createBackground();
-        const inner = document.createElement('div');
-        inner.classList.add('wfnshImportInner');
-        inner.classList.add('wfnshImportGAScriptOptions');
-        outer.appendChild(inner);
-        const header = document.createElement('h1');
-        header.textContent = 'Import using Google Apps Script';
-        inner.appendChild(header);
-        const sub = document.createElement('p');
-        const s1 = document.createElement('span');
-        s1.textContent = 'Please enter your Importer Script details below. New to the Importer Script? ';
-        const s2 = document.createElement('a');
-        s2.textContent = 'Please click here';
-        s2.addEventListener('click', () => {
-            const b = new Blob([userManualGAS], { type: 'text/html' });
-            const bUrl = URL.createObjectURL(b);
-            window.open(bUrl, '_blank', 'popup');
-        });
-        const s3 = document.createElement('span');
-        s3.textContent = ' for detailed setup instructions.';
-        sub.appendChild(s1);
-        sub.appendChild(s2);
-        sub.appendChild(s3);
-        inner.appendChild(sub);
-        const form = document.createElement('form');
-        inner.appendChild(form);
-        const tbl = document.createElement('table');
-        tbl.classList.add('wfnshGAScriptTable');
-        form.appendChild(tbl);
-
-        const inputs = [
-            {
-                id: 'url',
-                type: 'text',
-                label: 'Script URL',
-                placeholder: 'https://script.google.com/macros/.../exec',
-                required: true
-            },
-            {
-                id: 'token',
-                type: 'password',
-                label: 'Access token',
-                required: true
-            },
-            {
-                id: 'since',
-                type: 'date',
-                label: 'Search emails starting from'
-            }
-        ];
-
-        const values = localStorage.hasOwnProperty('wfnshGAScriptSettings') ? JSON.parse(localStorage.wfnshGAScriptSettings) : { };
-
-        inputs.forEach(input => {
-            const row = document.createElement('tr');
-            const col1 = document.createElement('td');
-            col1.textContent = `${input.label}:`;
-            const col2 = document.createElement('td');
-            input.field = document.createElement('input');
-            input.field.type = input.type;
-            if (input.required) input.field.required = true;
-            if (input.placeholder) input.field.placeholder = input.placeholder;
-            if (values.hasOwnProperty(input.id)) input.field.value = values[input.id];
-            col2.appendChild(input.field);
-            row.appendChild(col1);
-            row.appendChild(col2);
-            tbl.appendChild(row);
-        });
-
-        const btn1 = document.createElement('input');
-        btn1.type = 'submit';
-        btn1.classList.add('wfnshTopButton');
-        btn1.value = 'Start import';
-        form.appendChild(btn1);
-
-        const btn2 = document.createElement('input');
-        btn2.type = 'button';
-        btn2.classList.add('wfnshTopButton');
-        btn2.classList.add('wfnshCancelButton');
-        btn2.value = 'Cancel import';
-        btn2.addEventListener('click', () => outer.parentNode.removeChild(outer));
-        form.appendChild(btn2);
-
-        form.addEventListener('submit', e => {
-            e.preventDefault();
-            const gass = {
-                url: inputs[0].field.value,
-                token: inputs[1].field.value,
-                since: inputs[2].field.value
-            };
-            localStorage.wfnshGAScriptSettings = JSON.stringify(gass);
-            outer.parentNode.removeChild(outer);
-            const loader = createEmailLoader();
-            loader.setTitle('Connecting...');
-            loader.setStatus('Validating script credentials');
-            const createFetchOptions = object => ({
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(object)
-            });
-            fetch(gass.url, createFetchOptions({ request: "test", token: gass.token })).then(response => response.json()).then(async data => {
-                if (data.status !== "OK") {
-                    alert('Credential validation failed. Please double check your access token and script URL.');
-                    loader.destroy();
-                } else {
-                    const startTime = new Date();
-                    loader.setStatus('Searching for new emails');
-                    const processedIDs = getProcessedEmailIDs();
-                    const ids = [];
-                    let count = 0, size = 500, totalFetched = 0;
-                    do {
-                        const batch = await fetch(gass.url, createFetchOptions({
-                            request: "list",
-                            token: gass.token,
-                            options: {
-                                since: gass.since,
-                                offset: totalFetched,
-                                size
-                            }
-                        })).then(response => response.json());
-                        if (batch.status !== "OK") throw new Error("Email listing failed");
-                        count = batch.result.length;
-                        totalFetched += count;
-                        batch.result.forEach(id => {
-                            if (!processedIDs.includes('G-' + id)) ids.push(id);
-                        });
-                        loader.setStatus(`Searching for new emails (${ids.length}/${totalFetched})`);
-                    } while (count == size);
-                    const totalCount = ids.length;
-                    loader.setTitle('Downloading...');
-                    loader.setStatus('Please wait');
-                    const dlBatchSize = 20;
-                    let offset = 0;
-                    let iterSuccess = true;
-                    const iterator = async function*() {
-                        try {
-                            let batch = [];
-                            while (ids.length) {
-                                while (batch.length < 20 && ids.length) batch.push(ids.shift());
-                                loader.setTitle('Downloading...');
-                                loader.setStatus(`Downloading ${offset + 1}-${offset + batch.length} of ${totalCount}`);
-                                const emlMap = await fetch(gass.url, createFetchOptions({
-                                    request: "fetch",
-                                    token: gass.token,
-                                    options: {
-                                        ids: batch
-                                    }
-                                })).then(response => response.json());
-                                if (emlMap.status !== "OK") throw new Error("Email listing failed");
-                                loader.setTitle('Parsing...');
-                                for (const id in emlMap.result) {
-                                    yield {
-                                        name: `${id}.eml`,
-                                        contents: emlMap.result[id],
-                                        id: 'G-' + id
-                                    };
-                                }
-                                offset += batch.length;
-                                batch = [];
-                            }
-                        } catch (e) {
-                            iterSuccess = false;
-                            console.error(e);
-                            alert('An error occurred fetching emails from Google. You may have to continue importing from the same date again to ensure all emails are downloaded.');
-                        }
-                    };
-                    importFromIterator(nominations, loader, iterator, totalCount, () => {
-                        if (iterSuccess) {
-                            const newSince = utcDateToISO8601(shiftDays(startTime, -1));
-                            gass.since = newSince;
-                            localStorage.wfnshGAScriptSettings = JSON.stringify(gass);
-                        }
-                    });
-                }
-            }).catch(e => {
-                console.error(e);
-                alert('The Importer Script returned an invalid response. Please see the console for more information.');
-                loader.destroy();
-            });
-            return false;
-        });
-    };
-
-    const importMethods = [
-        {
-            title: 'From *.eml files',
-            description: 'Import email files saved and exported from an email client, such as Thunderbird',
-            callback: importFromEml,
-            icon: 'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjxzdmcKICAgdmVyc2lvbj0iMS4xIgogICBpZD0iTGF5ZXJfMSIKICAgeD0iMHB4IgogICB5PSIwcHgiCiAgIHdpZHRoPSIyODM0LjkzOCIKICAgaGVpZ2h0PSIyOTAyLjE5MzEiCiAgIHZpZXdCb3g9IjAgMCAyODM0LjkzNzkgMjkwMi4xOTMxIgogICBlbmFibGUtYmFja2dyb3VuZD0ibmV3IDAgMCA1MzU2LjkyOSA1MDE0Ljk5NyIKICAgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIgogICB4bWxuczpzdmc9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8ZGVmcwogICAgIGlkPSJkZWZzNDMiIC8+CiAgPGcKICAgICBpZD0iZzM4IgogICAgIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0xMzE1LjQ2NCwtOTQ2LjkxMikiPgogICAgPGcKICAgICAgIGlkPSJnMzYiPgogICAgICA8cGF0aAogICAgICAgICBmaWxsPSIjZjM3MDViIgogICAgICAgICBkPSJtIDQwMzUuNDcsMjA0OS44NzkgYyAtMzAuMTYzLC0xOC4zMjEgLTY0LjE3MiwtMjkuNTg3IC0xMDAuODAyLC0yOS41ODcgSCAxNTMxLjExNyBjIC00OC40NSwwIC05Mi42MzUsMTguNzY3IC0xMjguNjk0LDQ5LjQ2MiBsIDEyMTguNzY1LDkzMi43NzkgNC40NzksMS4zNzggLTQuNDc5LDIuNzA2IDEwNi44MTMsODEuNzU0IDEwOC4zNTMsLTg1LjgzOCAtNC4yODgsLTIuNzI5IDQuMjg4LC0xLjI1NyB6IgogICAgICAgICBpZD0icGF0aDYiIC8+CiAgICAgIDxwYXRoCiAgICAgICAgIGZpbGw9IiNmMzcwNWIiCiAgICAgICAgIGQ9Im0gMTQwMi40MiwyMDczLjc5NiBjIDAsMCAxMTY0LjUxMSwtMTEyNi44ODQgMTMzNS41MDEsLTExMjYuODg0IDE3MS4wNjcsMCAxMjk3LjU1MywxMTA2Ljk4IDEyOTcuNTUzLDExMDYuOTggeiIKICAgICAgICAgaWQ9InBhdGg4IiAvPgogICAgICA8ZwogICAgICAgICBpZD0iZzI0Ij4KICAgICAgICA8cmVjdAogICAgICAgICAgIHg9IjE5MDIuMDc4IgogICAgICAgICAgIHk9IjE3NTQuNzI3MSIKICAgICAgICAgICBmaWxsPSIjZmZmZmZmIgogICAgICAgICAgIHdpZHRoPSIxNjkzLjc1MSIKICAgICAgICAgICBoZWlnaHQ9IjE5NzYuMDUyIgogICAgICAgICAgIGlkPSJyZWN0MTAiIC8+CiAgICAgICAgPHJlY3QKICAgICAgICAgICB4PSIyMDIxLjc2NCIKICAgICAgICAgICB5PSIxOTI2LjA0MzkiCiAgICAgICAgICAgZmlsbD0iI2ZmZDA2NiIKICAgICAgICAgICB3aWR0aD0iMTQ1NC4zMDgiCiAgICAgICAgICAgaGVpZ2h0PSI4OC40MDQ5OTkiCiAgICAgICAgICAgaWQ9InJlY3QxMiIgLz4KICAgICAgICA8cmVjdAogICAgICAgICAgIHg9IjIwMjEuNzY0IgogICAgICAgICAgIHk9IjIzMzAuOTc0MSIKICAgICAgICAgICBmaWxsPSIjZmZkMDY2IgogICAgICAgICAgIHdpZHRoPSIxNDU0LjMwOCIKICAgICAgICAgICBoZWlnaHQ9Ijg4LjM2MSIKICAgICAgICAgICBpZD0icmVjdDE0IiAvPgogICAgICAgIDxyZWN0CiAgICAgICAgICAgeD0iMjAyMS43NjQiCiAgICAgICAgICAgeT0iMjEyOC41MTM5IgogICAgICAgICAgIGZpbGw9IiNmZmQwNjYiCiAgICAgICAgICAgd2lkdGg9IjE0NTQuMzA4IgogICAgICAgICAgIGhlaWdodD0iODguMzkxOTk4IgogICAgICAgICAgIGlkPSJyZWN0MTYiIC8+CiAgICAgICAgPHJlY3QKICAgICAgICAgICB4PSIyMDIxLjc2NCIKICAgICAgICAgICB5PSIyNTMzLjQzNDEiCiAgICAgICAgICAgZmlsbD0iI2ZmZDA2NiIKICAgICAgICAgICB3aWR0aD0iMTQ1NC4zMDgiCiAgICAgICAgICAgaGVpZ2h0PSI4OC4zMzAwMDIiCiAgICAgICAgICAgaWQ9InJlY3QxOCIgLz4KICAgICAgICA8cmVjdAogICAgICAgICAgIHg9IjIwMjEuNzY0IgogICAgICAgICAgIHk9IjI3MjIuNzEiCiAgICAgICAgICAgZmlsbD0iI2ZmZDA2NiIKICAgICAgICAgICB3aWR0aD0iMTQ1NC4zMDgiCiAgICAgICAgICAgaGVpZ2h0PSI4OC40MDQ5OTkiCiAgICAgICAgICAgaWQ9InJlY3QyMCIgLz4KICAgICAgICA8cmVjdAogICAgICAgICAgIHg9IjIwMjEuNzY0IgogICAgICAgICAgIHk9IjI5MjUuMjA4IgogICAgICAgICAgIGZpbGw9IiNmZmQwNjYiCiAgICAgICAgICAgd2lkdGg9IjE0NTQuMzA4IgogICAgICAgICAgIGhlaWdodD0iODguMzIzOTk3IgogICAgICAgICAgIGlkPSJyZWN0MjIiIC8+CiAgICAgIDwvZz4KICAgICAgPGcKICAgICAgICAgaWQ9ImczNCI+CiAgICAgICAgPHBvbHlnb24KICAgICAgICAgICBmaWxsPSIjNjZiYmM5IgogICAgICAgICAgIHBvaW50cz0iMjU1Mi42MzQsMjk1NC4wNjkgMjU1Mi44NCwyOTU0LjIzMSAyNTE2LjEyMSwyOTI2LjA4MiAiCiAgICAgICAgICAgaWQ9InBvbHlnb24yNiIgLz4KICAgICAgICA8cGF0aAogICAgICAgICAgIGZpbGw9IiNmN2JhMWQiCiAgICAgICAgICAgZD0ibSAyNTUyLjg0LDI5NTQuMjMxIC0wLjIwNiwtMC4xNjIgLTM2LjUxMywtMjcuOTg3IC0zNDEuODkyLC0yNjEuNTQ5IC03NzEuODA2LC01OTAuNzM2IGMgLTUyLjQwMSw0NC43NjIgLTg2Ljk1OSwxMTUuMzgyIC04Ni45NTksMTk1LjYxNiB2IDEzMzQuNTY5IGMgMCw2OS45MzUgMjYuMDY5LDEzMi41NTEgNjcuMzc2LDE3Ny4xODkgbCA5NTkuMTI1LC01OTkuOTI4IDI3OS4yMjQsLTE3NC42MjEgeiIKICAgICAgICAgICBpZD0icGF0aDI4IiAvPgogICAgICAgIDxwYXRoCiAgICAgICAgICAgZmlsbD0iI2Y3YmExZCIKICAgICAgICAgICBkPSJtIDQwMzUuNDcsMjA1My44OTYgLTg5Ni43ODUsNzA5LjU4NSB2IDAgbCAtMTg5LjYyMSwxNTAuMDc0IC05Ni42MjQsNzYuMzY2IC0xNi4wOTMsMTIuNjA4IDMzOS43ODUsMjE2LjQzMiA4OTcuMjY5LDU3MS40MTIgYyA0Ni43MDYsLTQ0Ljk1MSA3Ny4wMDEsLTExMS4yODIgNzcuMDAxLC0xODYuMzk1IFYgMjI2OS40MSBjIDAsLTkzLjgxNSAtNDYuOTEzLC0xNzQuMzIgLTExNC45MzIsLTIxNS41MTQgeiIKICAgICAgICAgICBpZD0icGF0aDMwIiAvPgogICAgICAgIDxwYXRoCiAgICAgICAgICAgZmlsbD0iI2U0YTMzYSIKICAgICAgICAgICBkPSJtIDMxNzYuMTQsMzIxOC45NjQgLTMzOS43ODYsLTIxNi40MzIgMTYuMDkzLC0xMi42MDggYyAtMC45ODUsMC42MzQgLTg5LjYzMyw1NS42MzUgLTEzMy41ODksNTUuNjM1IC00My43OTIsMCAtMTY1LjI0OCwtOTAuNjg0IC0xNjYuMDE0LC05MS4zMjggbCA2OC4zNTIsNTIuMzg2IC0yNzkuMjI0LDE3NC42MiAtOTU5LjEyOCw1OTkuOTMgYyAzOC41MjYsNDEuODUxIDkwLjY5Nyw2Ny45MzggMTQ4LjI4NCw2Ny45MzggaCAyNDAzLjU0OSBjIDUzLjE2LDAgMTAxLjA4MSwtMjIuNjI5IDEzOC43MzUsLTU4LjczNSB6IgogICAgICAgICAgIGlkPSJwYXRoMzIiIC8+CiAgICAgIDwvZz4KICAgIDwvZz4KICA8L2c+Cjwvc3ZnPgo='
-        },
-        {
-            title: 'Google Apps Script',
-            description: 'Import emails directly from Gmail, using a Google Apps Script',
-            callback: importFromGAScript,
-            icon: 'data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiIHN0YW5kYWxvbmU9Im5vIj8+CjxzdmcKICAgdmVyc2lvbj0iMS4xIgogICB3aWR0aD0iNDU2LjEzOTI1IgogICBoZWlnaHQ9IjM2MC44MDg1IgogICBpZD0ic3ZnMjIiCiAgIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIKICAgeG1sbnM6c3ZnPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnMKICAgICBpZD0iZGVmczI2IiAvPgogIDxyZWN0CiAgICAgZmlsbD0iI2VhNDMzNSIKICAgICB4PSIwIgogICAgIHk9IjI1My41MzAzOCIKICAgICB3aWR0aD0iMzczIgogICAgIGhlaWdodD0iMTA3IgogICAgIHJ4PSI1My41IgogICAgIGlkPSJyZWN0MiIgLz4KICA8cmVjdAogICAgIGZpbGw9IiNmYmJjMDQiCiAgICAgeD0iLTQ5Mi45MDU5NCIKICAgICB5PSItMTE0LjA0NzMzIgogICAgIHdpZHRoPSIzNzMiCiAgICAgaGVpZ2h0PSIxMDciCiAgICAgcng9IjUzLjUiCiAgICAgdHJhbnNmb3JtPSJyb3RhdGUoLTE0NCkiCiAgICAgaWQ9InJlY3Q0IiAvPgogIDxyZWN0CiAgICAgZmlsbD0iIzM0YTg1MyIKICAgICB4PSI3MS4wODQ2MjUiCiAgICAgeT0iLTI2My42ODY5MiIKICAgICB3aWR0aD0iMzczIgogICAgIGhlaWdodD0iMTA3IgogICAgIHJ4PSI1My41IgogICAgIHRyYW5zZm9ybT0icm90YXRlKDcyKSIKICAgICBpZD0icmVjdDYiIC8+CiAgPHJlY3QKICAgICBmaWxsPSIjNDI4NWY0IgogICAgIHg9Ii0yNDYuMDAxMSIKICAgICB5PSIzNDUuOTQzNzMiCiAgICAgd2lkdGg9IjM3MyIKICAgICBoZWlnaHQ9IjEwNyIKICAgICByeD0iNTMuNSIKICAgICB0cmFuc2Zvcm09InJvdGF0ZSgtNzIpIgogICAgIGlkPSJyZWN0OCIgLz4KICA8ZwogICAgIGZpbGw9IiNmZmZmZmYiCiAgICAgaWQ9ImcyMCIKICAgICB0cmFuc2Zvcm09InRyYW5zbGF0ZSgtMjcuNTMwMDAxLC03NS4zNjk2MTMpIj4KICAgIDxjaXJjbGUKICAgICAgIGN4PSIyNjUuODQiCiAgICAgICBjeT0iMTI5LjI4IgogICAgICAgcj0iMjYuNzAwMDAxIgogICAgICAgaWQ9ImNpcmNsZTEwIiAvPgogICAgPGNpcmNsZQogICAgICAgY3g9IjEzMS40NCIKICAgICAgIGN5PSIyMjUuNDQiCiAgICAgICByPSIyNi43MDAwMDEiCiAgICAgICBpZD0iY2lyY2xlMTIiIC8+CiAgICA8Y2lyY2xlCiAgICAgICBjeD0iODEuMzYwMDAxIgogICAgICAgY3k9IjM4Mi42MDAwMSIKICAgICAgIHI9IjI2LjcwMDAwMSIKICAgICAgIGlkPSJjaXJjbGUxNCIgLz4KICAgIDxjaXJjbGUKICAgICAgIGN4PSIzNDguMjIiCiAgICAgICBjeT0iMzgxLjY0MDAxIgogICAgICAgcj0iMjYuNzAwMDAxIgogICAgICAgaWQ9ImNpcmNsZTE2IiAvPgogICAgPGNpcmNsZQogICAgICAgY3g9IjQzMC42NzAwMSIKICAgICAgIGN5PSIxMjcuODkiCiAgICAgICByPSIyNi43MDAwMDEiCiAgICAgICBpZD0iY2lyY2xlMTgiIC8+CiAgPC9nPgo8L3N2Zz4K'
-        }
-    ];
-
-    const addImportButton = nominations => {
-        if (document.getElementById('wfnshImportBtn') !== null) return;
-        const ref = document.querySelector('wf-logo');
-        const div = document.createElement('div');
-        const btn = document.createElement('btn');
-        btn.textContent = 'Import emails';
-        btn.addEventListener('click', () => {
-            const outer = document.createElement('div');
-            outer.classList.add('wfnshImportBg');
-            document.querySelector('body').appendChild(outer);
-            const inner = document.createElement('div');
-            inner.classList.add('wfnshImportInner');
-            inner.classList.add('wfnshImportMethod');
-            outer.appendChild(inner);
-            const header = document.createElement('h1');
-            header.textContent = 'Import history from emails';
-            inner.appendChild(header);
-            const sub = document.createElement('p');
-            sub.textContent = 'Please select how you want to import your emails.';
-            inner.appendChild(sub);
-
-            importMethods.forEach(method => {
-                const btn = document.createElement('div');
-                btn.classList.add('wfnshMethodButton');
-                if (method.icon) {
-                    btn.style.paddingLeft = '60px';
-                    btn.style.backgroundImage = 'url(' + method.icon + ')';
-                }
-                const btnTitle = document.createElement('p');
-                btnTitle.classList.add('wfnshMethodTitle');
-                btnTitle.textContent = method.title;
-                btn.appendChild(btnTitle);
-                const btnDesc = document.createElement('p');
-                btnDesc.classList.add('wfnshMethodDesc');
-                btnDesc.textContent = method.description;
-                btn.appendChild(btnDesc);
-                btn.addEventListener('click', () => {
-                    outer.parentNode.removeChild(outer);
-                    method.callback(nominations);
-                });
-                inner.appendChild(btn);
-            });
-        });
-        btn.id = 'wfnshImportBtn';
-        btn.classList.add('wfnshTopButton');
-        div.appendChild(btn);
-        ref.parentNode.parentNode.appendChild(div);
-    };
-
-    const renderEmailFailureEntry = (e, ignored) => {
-        const timeOpts = { dateStyle: 'medium', timeStyle: 'long' };
-        const entry = document.createElement('div');
-        entry.classList.add('wfnshImportEntry');
-        const title = document.createElement('p');
-        title.classList.add('wfnshIETitle');
-        title.textContent = e.file;
-        entry.appendChild(title);
-        if (e.subject) {
-            const subject = document.createElement('p');
-            subject.classList.add('wfnshIEErrExtra');
-            subject.textContent = `Subject: ${e.subject}`;
-            entry.appendChild(subject);
-        }
-        if (e.date) {
-            const time = document.createElement('p');
-            time.classList.add('wfnshIEErrExtra');
-            time.textContent = `Received: ${e.date.toLocaleString(undefined, timeOpts)}`;
-            entry.appendChild(time);
-        }
-        const error = document.createElement('p');
-        if (!ignored) error.classList.add('wfnshIEError');
-        error.textContent = e.reason;
-        entry.appendChild(error);
-        return entry;
-    }
-
-    const renderEmailImportEntry = e => {
-        const timeOpts = { dateStyle: 'medium', timeStyle: 'long' };
-        const entry = document.createElement('div');
-        entry.classList.add('wfnshImportEntry');
-        const title = document.createElement('p');
-        title.classList.add('wfnshIETitle');
-        title.textContent = e.title;
-        entry.appendChild(title);
-        e.diffs.forEach(diff => {
-            const lblStatus = document.createElement('span');
-            lblStatus.classList.add('wfnshIEStatus');
-            lblStatus.textContent = stateMap[diff.status];
-            const lblOld = document.createElement('span');
-            lblOld.classList.add('wfnshIEOld');
-            lblOld.textContent = diff.previously ? new Date(diff.previously).toLocaleString(undefined, timeOpts) : '(missing)';
-            const lblNew = document.createElement('span');
-            lblNew.classList.add('wfnshIENew');
-            if (diff.verified) lblNew.classList.add('wfnshVerified');
-            lblNew.textContent = new Date(diff.timestamp).toLocaleString(undefined, timeOpts);
-            const change = document.createElement('p');
-            change.classList.add('wfnshIEChange');
-            change.appendChild(lblStatus);
-            change.appendChild(document.createTextNode(': '));
-            change.appendChild(lblOld);
-            change.appendChild(document.createTextNode(' \u2192 '));
-            change.appendChild(lblNew);
-            entry.appendChild(change);
-        });
-        return entry;
-    }
-
-    const processEmailImport = (changes, progress) => new Promise((resolve, reject) => getIDBInstance().then(db => {
-        console.log('Importing changes from emails...');
-
-        const tx = db.transaction([OBJECT_STORE_NAME], "readwrite");
-        const start = Date.now();
-        // Clean up when we're done (we'll commit later with tx.commit();)
-        tx.oncomplete = event => {
-            db.close();
-            console.log(`Email import completed in ${Date.now() - start} msec.`);
-        }
-
-        const objectStore = tx.objectStore(OBJECT_STORE_NAME);
-        const getList = objectStore.getAll();
-        getList.onsuccess = () => {
-            // Create an ID->nomination map for easy lookups.
-            const savedNominations = Object.assign({}, ...getList.result.map(nom => ({ [nom.id]: nom })));
-            changes.forEach((nom, i) => {
-                progress(i + 1, changes.length);
-                if (nom.id in savedNominations) {
-                    // Nomination ALREADY EXISTS in IDB
-                    const saved = savedNominations[nom.id];
-                    const update = { ...saved, statusHistory: nom.updates };
-                    objectStore.put(update);
-                }
-            });
-            tx.commit();
-            resolve();
-        };
-    }));
-
-    const mergeEmailChanges = (history, changes) => {
-        const joinedChanges = {};
-        Object.keys(changes).forEach(k => {
-            const joined = [...changes[k].updates, ...history[k]];
-            joined.sort((a, b) => a.timestamp - b.timestamp);
-            for (let i = joined.length - 2; i >= 0; i--) {
-                if (joined[i].status == joined[i + 1].status) {
-                    // Duplicate status
-                    const curDate = new Date(joined[i].timestamp);
-                    if (!(curDate.getUTCMilliseconds() || curDate.getUTCSeconds() || curDate.getUTCMinutes() || curDate.getUTCHours())) {
-                        // All of the above are 0 means this was with extreme likelihood a WFES import that is less accurate.
-                        // Thus we keep the email date instead for this one even though it happened "in the future".
-                        joined.splice(i, 1);
-                    } else {
-                        joined.splice(i + 1, 1);
-                    }
-                }
-            }
-            const diffs = [];
-            if (history[k].length) {
-                for (let i = 0, j = 0; i < history[k].length && j < joined.length; i++, j++) {
-                    while (history[k][i].status !== joined[j].status) diffs.push({ ...joined[j++], previously: null });
-                    if (history[k][i].timestamp !== joined[j].timestamp || !!history[k][i].verified !== !!joined[j].verified) diffs.push({ ...joined[j], previously: history[k][i].timestamp });
-                }
-            } else {
-                for (let j = 0; j < joined.length; j++) {
-                    diffs.push({ ...joined[j++], previously: null });
-                }
-            }
-            if (diffs.length) joinedChanges[k] = { ...changes[k], updates: joined, diffs };
-        });
-        return joinedChanges;
-    };
-
-    const parseEmails = (files, fileCount, nominations, statusHistory, progress) => new Promise(async (resolve, reject) => {
-        const remapChars = text => {
-            const map = {
-                A: 'ÀÁÂÃÅÄĀĂĄǍǞǠǺȀȂȦ',
-                C: 'ÇĆĈĊČ',
-                D: 'Ď',
-                E: 'ÈÊËÉĒĔĖĘĚȄȆȨ',
-                G: 'ĜĞĠĢǦǴ',
-                H: 'ĤȞ',
-                I: 'ÌÍÎÏĨĪĬĮİǏȈȊ',
-                J: 'Ĵ',
-                K: 'ĶǨ',
-                L: 'ĹĻĽ',
-                N: 'ÑŃŅŇǸ',
-                O: 'ÒÔÕÓÖŌŎŐƠǑǪǬȌȎȪȬȮȰ',
-                R: 'ŔŖŘȐȒ',
-                S: 'ŚŜŞŠȘ',
-                T: 'ŢŤȚ',
-                U: 'ÙÚÛÜŨŪŬŮŰŲƯǓǕǗǙǛȔȖ',
-                W: 'Ŵ',
-                Y: 'ÝŶŸȲ',
-                Z: 'ŹŻŽ',
-                a: 'àáâãåäāăąǎǟǡǻȁȃȧ',
-                c: 'çćĉċč',
-                d: 'ď',
-                e: 'èêëéēĕėęěȅȇȩ',
-                g: 'ĝğġģǧǵ',
-                h: 'ĥȟ',
-                i: 'ìíîïĩīĭįǐȉȋ',
-                j: 'ĵǰ',
-                k: 'ķǩ',
-                l: 'ĺļľ',
-                n: 'ñńņňǹ',
-                o: 'òôõóöōŏőơǒǫǭȍȏȫȭȯȱ',
-                r: 'ŕŗřȑȓ',
-                s: 'śŝşšș',
-                t: 'ţťț',
-                u: 'ùúûüũūŭůűųưǔǖǘǚǜȕȗ',
-                w: 'ŵ',
-                y: 'ýÿŷȳ',
-                z: 'źżž',
-                Æ: 'ǢǼ',
-                Ø: 'Ǿ',
-                æ: 'ǣǽ',
-                ø: 'ǿ',
-                Ʒ: 'Ǯ',
-                ʒ: 'ǯ',
-                "'": '"'
-            };
-            for (const k in map) {
-                if (map.hasOwnProperty(k)) {
-                    text = text.replaceAll(new RegExp(`[${map[k]}]`, 'g'), k);
-                }
-            }
-            return text;
-        };
-
-        const tryNull = call => {
-            try {
-                return call() || null;
-            } catch (e) {
-                return null;
-            }
-        }
-
-        const eQuery = {
-            IMAGE_ANY: doc => tryNull(() => doc.querySelector('img').src),
-            IMAGE_ALT: alt => doc => tryNull(() => doc.querySelector(`img[alt='${alt}']`).src),
-            ING_TYPE_1: doc => tryNull(() => doc.querySelector('h2 ~ p:last-of-type').lastChild.textContent.trim()),
-            ING_TYPE_2: doc => tryNull(() => doc.querySelector('h2 ~ p:last-of-type img').src),
-            ING_TYPE_3: (status, regex, tooClose) => (doc, fh) => {
-                const match = fh.subject.match(regex);
+    class EmailProcessor {
+        #eQuery = {
+            IMAGE_ANY: doc => this.#tryNull(() => doc.querySelector('img').src),
+            IMAGE_ALT: alt => doc => this.#tryNull(() => doc.querySelector(`img[alt='${alt}']`).src),
+            ING_TYPE_1: doc => this.#tryNull(() => doc.querySelector('h2 ~ p:last-of-type').lastChild.textContent.trim()),
+            ING_TYPE_2: doc => this.#tryNull(() => doc.querySelector('h2 ~ p:last-of-type img').src),
+            ING_TYPE_3: (status, regex, tooClose) => (doc, email) => {
+                const match = email.getHeader('Subject').match(regex);
                 if (!match) throw new Error('Unable to extract the name of the Wayspot from this email.');
                 const text = doc.querySelector('p').textContent.trim();
                 if (tooClose && text.includes(tooClose)) {
                     status = 'ACCEPTED';
                 }
-                const candidates = nominations.filter(e => e.title == match.groups.title && e.status == status);
-                if (!candidates.length) throw new Error(`Unable to find a nomination with status ${status} that matches the title "${match.groups.title}" on this Wayfarer account.`);
-                if (candidates.length > 1) throw new Error(`Multiple nominations with status ${status} on this Wayfarer account match the title "${match.groups.title}" specified in the email.`);
+                const candidates = this.#submissions.filter(e => e.title == match.groups.title && e.status == status);
+                if (!candidates.length) throw new NominationMatchingError(`Unable to find a nomination with status ${status} that matches the title "${match.groups.title}" on this Wayfarer account.`);
+                if (candidates.length > 1) throw new NominationMatchingError(`Multiple nominations with status ${status} on this Wayfarer account match the title "${match.groups.title}" specified in the email.`);
                 return candidates[0].imageUrl;
             },
             ING_TYPE_4: doc => {
                 const query = doc.querySelector('h2 ~ p:last-of-type');
                 if (!query) return null;
-                const [ title, desc ] = query.textContent.split('\n');
+                const [title, desc] = query.textContent.split('\n');
                 if (!title || !desc) return null;
-                const candidates = nominations.filter(e => e.title == title);
+                const candidates = this.#submissions.filter(e => e.title == title);
                 if (!candidates.length) throw new Error(`Unable to find a nomination that matches the title "${title}" on this Wayfarer account.`);
                 if (candidates.length > 1) {
                     const cand2 = candidates.filter(e => e.description == desc);
-                    if (!cand2.length) throw new Error(`Unable to find a nomination that matches the title "${title}" and description "${desc}" on this Wayfarer account.`);
-                    if (cand2.length > 1) throw new Error(`Multiple nominations on this Wayfarer account match the title "${title}" and description "${desc}" specified in the email.`);
+                    if (!cand2.length) throw new NominationMatchingError(`Unable to find a nomination that matches the title "${title}" and description "${desc}" on this Wayfarer account.`);
+                    if (cand2.length > 1) throw new NominationMatchingError(`Multiple nominations on this Wayfarer account match the title "${title}" and description "${desc}" specified in the email.`);
                     return cand2[0].imageUrl;
                 }
                 return candidates[0].imageUrl;
             },
-            ING_TYPE_5: (doc, fh) => {
+            ING_TYPE_5: (doc, email) => {
                 const a = doc.querySelector('a[href^="https://www.ingress.com/intel?ll="]');
                 if (!a) return null;
                 const match = a.href.match(/\?ll=(?<lat>-?\d{1,2}(\.\d{1,6})?),(?<lng>-?\d{1,3}(\.\d{1,6})?)/);
                 if (!match) return;
-                const candidates = nominations.filter(e => e.lat == parseFloat(match.groups.lat) && e.lng == parseFloat(match.groups.lng));
+                const candidates = this.#submissions.filter(e => e.lat == parseFloat(match.groups.lat) && e.lng == parseFloat(match.groups.lng));
                 if (candidates.length != 1) {
-                    const m2 = fh.subject.match(/^(Ingress Portal Live|Portal review complete): ?(?<title>.*)$/);
+                    const m2 = email.getHeader('Subject').match(/^(Ingress Portal Live|Portal review complete): ?(?<title>.*)$/);
                     if (!m2) throw new Error('Unable to extract the name of the Wayspot from this email.');
-                    const cand2 = (candidates.length ? candidates : nominations).filter(e => e.title == m2.groups.title);
-                    if (!cand2.length) throw new Error(`Unable to find a nomination that matches the title "${m2.groups.title}" or is located at ${match.groups.lat},${match.groups.lng} on this Wayfarer account.`);
-                    if (cand2.length > 1) throw new Error(`Multiple nominations on this Wayfarer account match the title "${m2.groups.title}" and/or are located at ${match.groups.lat},${match.groups.lng} as specified in the email.`);
+                    const cand2 = (candidates.length ? candidates : this.#submissions).filter(e => e.title == m2.groups.title);
+                    if (!cand2.length) throw new NominationMatchingError(`Unable to find a nomination that matches the title "${m2.groups.title}" or is located at ${match.groups.lat},${match.groups.lng} on this Wayfarer account.`);
+                    if (cand2.length > 1) throw new NominationMatchingError(`Multiple nominations on this Wayfarer account match the title "${m2.groups.title}" and/or are located at ${match.groups.lat},${match.groups.lng} as specified in the email.`);
                     return cand2[0].imageUrl;
                 }
                 return candidates[0].imageUrl;
             },
-            ING_TYPE_6: regex => (doc, fh) => {
-                const match = fh.subject.match(regex);
+            ING_TYPE_6: regex => (doc, email) => {
+                const match = email.getHeader('Subject').match(regex);
                 if (!match) throw new Error('Unable to extract the name of the Wayspot from this email.');
-                const date = new Date(fh.date);
+                const date = new Date(email.getHeader('Date'));
                 // Wayfarer is in UTC, but emails are in local time. Work around this by also matching against the preceding
                 // and following dates from the one specified in the email.
-                const dateCur = utcDateToISO8601(date);
-                const dateNext = utcDateToISO8601(shiftDays(date, 1));
-                const datePrev = utcDateToISO8601(shiftDays(date, -1));
-                const dates = [ datePrev, dateCur, dateNext ];
-                const candidates = nominations.filter(e => dates.includes(e.day) && e.title.trim() == match.groups.title);
-                if (!candidates.length) throw new Error(`Unable to find a nomination that matches the title "${match.groups.title}" and submission date ${dateCur} on this Wayfarer account.`);
-                if (candidates.length > 1) throw new Error(`Multiple nominations on this Wayfarer account match the title "${match.groups.title}" and submission date ${dateCur} specified in the email.`);
+                const dateCur = this.#utcDateToISO8601(date);
+                const dateNext = this.#utcDateToISO8601(this.#shiftDays(date, 1));
+                const datePrev = this.#utcDateToISO8601(this.#shiftDays(date, -1));
+                const dates = [datePrev, dateCur, dateNext];
+                const candidates = this.#submissions.filter(e => dates.includes(e.day) && e.title.trim() == match.groups.title);
+                if (!candidates.length) throw new NominationMatchingError(`Unable to find a nomination that matches the title "${match.groups.title}" and submission date ${dateCur} on this Wayfarer account.`);
+                if (candidates.length > 1) throw new NominationMatchingError(`Multiple nominations on this Wayfarer account match the title "${match.groups.title}" and submission date ${dateCur} specified in the email.`);
                 return candidates[0].imageUrl;
             },
-            PGO_TYPE_1: doc => tryNull(() => doc.querySelector('h2 ~ p:last-of-type').previousElementSibling.textContent.trim()),
-            PGO_TYPE_2: doc => tryNull(() => doc.querySelector('h2 ~ p:last-of-type').previousElementSibling.querySelector('img').src),
-            WF_DECIDED: (regex, months) => doc => {
-                const mr = new RegExp(regex.source.split('(?<month>)').join(`(?<month>${months.join('|')})`));
-                const match = (doc.querySelector('.em_font_20') || doc.querySelector('.em_org_u').firstChild).textContent.trim().match(mr);
-                const month = months.indexOf(match.groups.month) + 1;
+            PGO_TYPE_1: doc => this.#tryNull(() => doc.querySelector('h2 ~ p:last-of-type').previousElementSibling.textContent.trim()),
+            PGO_TYPE_2: doc => this.#tryNull(() => doc.querySelector('h2 ~ p:last-of-type').previousElementSibling.querySelector('img').src),
+            WF_DECIDED: (regex, monthNames) => doc => {
+                const windowRef = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+                const header = (doc.querySelector('.em_font_20') || doc.querySelector('.em_org_u').firstChild).textContent.trim();
+                let month = null;
+                let match = null;
+                for (let i = 0; i < monthNames.length; i++) {
+                    const months = monthNames[i];
+                    const mr = new RegExp(regex.source.split('(?<month>)').join(`(?<month>${months.join('|')})`));
+                    match = header.match(mr);
+                    if (match) {
+                        month = months.indexOf(match.groups.month) + 1;
+                        break;
+                    }
+                }
+                if (!match) return null;
                 const date = `${match.groups.year}-${('0' + month).slice(-2)}-${('0' + match.groups.day).slice(-2)}`;
                 // Wayfarer is in UTC, but emails are in local time. Work around this by also matching against the preceding
                 // and following dates from the one specified in the email.
-                const dateNext = utcDateToISO8601(shiftDays(new Date(date), 1));
-                const datePrev = utcDateToISO8601(shiftDays(new Date(date), -1));
-                const dates = [ datePrev, date, dateNext ];
-                const candidates = nominations.filter(e => dates.includes(e.day) && remapChars(e.title) == match.groups.title && ['ACCEPTED', 'REJECTED', 'DUPLICATE', 'APPEALED', 'NIANTIC_REVIEW'].includes(e.status));
-                if (!candidates.length) throw new Error(`Unable to find a nomination that matches the title "${match.groups.title}" and submission date ${date} on this Wayfarer account.`);
-                if (candidates.length > 1) throw new Error(`Multiple nominations on this Wayfarer account match the title "${match.groups.title}" and submission date ${date} specified in the email.`);
+                const dateNext = this.#utcDateToISO8601(this.#shiftDays(new Date(date), 1));
+                const datePrev = this.#utcDateToISO8601(this.#shiftDays(new Date(date), -1));
+                const dates = [datePrev, date, dateNext];
+                const candidates = this.#submissions.filter(e => dates.includes(e.day) && windowRef.wft_plugins_api.emailImport.stripDiacritics(e.title) == match.groups.title && ['ACCEPTED', 'REJECTED', 'DUPLICATE', 'APPEALED', 'NIANTIC_REVIEW'].includes(e.status));
+                if (!candidates.length) throw new NominationMatchingError(`Unable to find a nomination that matches the title "${match.groups.title}" and submission date ${date} on this Wayfarer account.`);
+                if (candidates.length > 1) throw new NominationMatchingError(`Multiple nominations on this Wayfarer account match the title "${match.groups.title}" and submission date ${date} specified in the email.`);
                 return candidates[0].imageUrl;
             }
         };
 
-        const eType = {
+        #eMonths = {
+            ENGLISH:        ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+            BENGALI:        ['জানু', 'ফেব', 'মার্চ', 'এপ্রিল', 'মে', 'জুন', 'জুলাই', 'আগস্ট', 'সেপ্টেম্বর', 'অক্টোবর', 'নভেম্বর', 'ডিসেম্বর'],
+            SPANISH:        ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'],
+            FRENCH:         ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'],
+            HINDI:          ['जन॰', 'फ़र॰', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुल॰', 'अग॰', 'सित॰', 'अक्तू॰', 'नव॰', 'दिस॰'],
+            ITALIAN:        ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'],
+            DUTCH:          ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'],
+            MARATHI:        ['जाने', 'फेब्रु', 'मार्च', 'एप्रि', 'मे', 'जून', 'जुलै', 'ऑग', 'सप्टें', 'ऑक्टो', 'नोव्हें', 'डिसें'],
+            NORWEGIAN:      ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des'],
+            POLISH:         ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'],
+            PORTUGUESE:     ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'],
+            RUSSIAN:        ['янв.', 'февр.', 'мар.', 'апр.', 'мая', 'июн.', 'июл.', 'авг.', 'сент.', 'окт.', 'нояб.', 'дек.'],
+            SWEDISH:        ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'],
+            TAMIL:          ['ஜன.', 'பிப்.', 'மார்.', 'ஏப்.', 'மே', 'ஜூன்', 'ஜூலை', 'ஆக.', 'செப்.', 'அக்.', 'நவ.', 'டிச.'],
+            TELUGU:         ['జన', 'ఫిబ్ర', 'మార్చి', 'ఏప్రి', 'మే', 'జూన్', 'జులై', 'ఆగ', 'సెప్టెం', 'అక్టో', 'నవం', 'డిసెం'],
+            THAI:           ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
+            NUMERIC:        ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'],
+            ZERO_PREFIXED:  ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'],
+        };
+
+        #eType = {
             NOMINATED: 'NOMINATED',
             ACCEPTED: 'ACCEPTED',
             REJECTED: 'REJECTED',
             DUPLICATE: 'DUPLICATE',
             APPEALED: 'APPEALED',
-            determineRejectType: (nom, fh) => {
-                const [ appealed ] = statusHistory[nom.id].filter(e => e.status === 'APPEALED');
+            determineRejectType: (nom, email) => {
+                const [appealed] = this.#statusHistory[nom.id].filter(e => e.status === 'APPEALED');
                 if (appealed) {
                     const appealDate = new Date(appealed.timestamp);
-                    const emailDate = new Date(fh.date);
+                    const emailDate = new Date(email.getHeader('Date'));
                     // Niantic doesn't send the correct email when they reject something as duplicate on appeal.
                     // We catch this here to prevent errors.
-                    if (appealDate < emailDate) return eType.determineAppealRejectType(nom);
+                    if (appealDate < emailDate) return this.#eType.determineAppealRejectType(nom);
                 }
-                for (let i = 0; i < statusHistory[nom.id].length; i++) {
-                    switch (statusHistory[nom.id][i].status) {
+                for (let i = 0; i < this.#statusHistory[nom.id].length; i++) {
+                    switch (this.#statusHistory[nom.id][i].status) {
                         case 'REJECTED':
-                            return eType.REJECTED;
+                            return this.#eType.REJECTED;
                         case 'DUPLICATE':
-                            return eType.DUPLICATE;
+                            return this.#eType.DUPLICATE;
                         case 'APPEALED':
-                            throw new Error('This email was rejected because determining the former status of this nomination after appealing it is impossible if it was appealed prior to the installation of this script.');
+                            if (strictClassificationMode) {
+                                throw new AmbiguousRejectionError('This email was rejected because determining the former status of this nomination after appealing it is impossible if it was appealed prior to the installation of this script.');
+                            } else {
+                                return 'REJECTED';
+                            }
                     }
                 }
-                throw new Error(`This email was rejected because it was not possible to determine how this nomination was rejected (expected status REJECTED or DUPLICATE, but observed ${statusHistory[nom.id][statusHistory[nom.id].length - 1].status}).`);
+                throw new AmbiguousRejectionError(`This email was rejected because it was not possible to determine how this nomination was rejected (expected status REJECTED or DUPLICATE, but observed ${this.#statusHistory[nom.id][this.#statusHistory[nom.id].length - 1].status}).`);
             },
             determineAppealRejectType: nom => {
-                const start = statusHistory[nom.id].indexOf('APPEALED') + 1;
-                for (let i = start; i < statusHistory[nom.id].length; i++) {
-                    switch (statusHistory[nom.id][i].status) {
+                const start = this.#statusHistory[nom.id].indexOf('APPEALED') + 1;
+                for (let i = start; i < this.#statusHistory[nom.id].length; i++) {
+                    switch (this.#statusHistory[nom.id][i].status) {
                         case 'REJECTED':
-                            return eType.REJECTED;
+                            return this.#eType.REJECTED;
                         case 'DUPLICATE':
-                            return eType.DUPLICATE;
+                            return this.#eType.DUPLICATE;
                     }
                 }
-                throw new Error(`This email was not processed because it was not possible to determine how Niantic rejected the appeal (expected status REJECTED or DUPLICATE, but observed ${statusHistory[nom.id][statusHistory[nom.id].length - 1].status}).`);
+                if (strictClassificationMode) {
+                    throw new AmbiguousRejectionError(`This email was not processed because it was not possible to determine how Niantic rejected the appeal (expected status REJECTED or DUPLICATE, but observed ${this.#statusHistory[nom.id][this.#statusHistory[nom.id].length - 1].status}).`);
+                } else {
+                    return 'REJECTED';
+                }
             }
         };
 
-        const eStatusHelpers = {
-            WF_DECIDED: (acceptText, rejectText) => (doc, nom, fh) => {
-                const text = doc.querySelector('.em_font_20').parentNode.nextElementSibling.textContent.replaceAll(/\s+/g, ' ').trim();
-                if (acceptText && text.includes(acceptText)) return eType.ACCEPTED;
-                if (rejectText && text.includes(rejectText)) return eType.determineRejectType(nom, fh);
+        #eStatusHelpers = {
+            WF_DECIDED: (acceptText, rejectText) => (doc, nom, email) => {
+                const text = doc.querySelector('.em_font_20')?.parentNode?.nextElementSibling?.textContent.replaceAll(/\s+/g, ' ').trim();
+                if (acceptText && text?.includes(acceptText)) return this.#eType.ACCEPTED;
+                if (rejectText && text?.includes(rejectText)) return this.#eType.determineRejectType(nom, email);
                 return null;
             },
-            WF_DECIDED_NIA: (acceptText, rejectText) => (doc, nom, fh) => {
-                const text = doc.querySelector('.em_org_u').textContent.replaceAll(/\s+/g, ' ').trim();
-                if (acceptText && text.includes(acceptText)) return eType.ACCEPTED;
-                if (rejectText && text.includes(rejectText)) return eType.determineRejectType(nom, fh);
+            WF_DECIDED_NIA: (acceptText, rejectText) => (doc, nom, email) => {
+                const text = doc.querySelector('.em_org_u')?.textContent.replaceAll(/\s+/g, ' ').trim();
+                if (acceptText && text?.includes(acceptText)) return this.#eType.ACCEPTED;
+                if (rejectText && text?.includes(rejectText)) return this.#eType.determineRejectType(nom, email);
+                return null;
+            },
+            WF_DECIDED_NIA_2: (acceptText, rejectText) => (doc, nom, email) => {
+                const text = doc.querySelector('.em_font_20')?.textContent?.split('\n')[2]?.replaceAll(/\s+/g, ' ').trim();
+                if (acceptText && text?.includes(acceptText)) return this.#eType.ACCEPTED;
+                if (rejectText && text?.includes(rejectText)) return this.#eType.determineRejectType(nom, email);
                 return null;
             },
             WF_APPEAL_DECIDED: (acceptText, rejectText) => (doc, nom) => {
                 const text = doc.querySelector('.em_font_20').parentNode.nextElementSibling.textContent.replaceAll(/\s+/g, ' ').trim();
-                if (acceptText && text.includes(acceptText)) return eType.ACCEPTED;
-                if (rejectText && text.includes(rejectText)) return eType.determineAppealRejectType(nom);
+                if (acceptText && text.includes(acceptText)) return this.#eType.ACCEPTED;
+                if (rejectText && text.includes(rejectText)) return this.#eType.determineAppealRejectType(nom);
                 return null;
             },
             ING_DECIDED: (acceptText1, acceptText2, rejectText, dupText1, tooCloseText, dupText2) => doc => {
                 const text = (doc.querySelector('h2 + p') || doc.querySelector('p')).textContent.trim();
-                if (acceptText1 && text.startsWith(acceptText1)) return eType.ACCEPTED;
-                if (acceptText2 && text.startsWith(acceptText2)) return eType.ACCEPTED;
-                if (rejectText && text.includes(rejectText)) return eType.REJECTED;
-                if (dupText1 && text.includes(dupText1)) return eType.DUPLICATE;
-                if (tooCloseText && text.includes(tooCloseText)) return eType.ACCEPTED;
+                if (acceptText1 && text.startsWith(acceptText1)) return this.#eType.ACCEPTED;
+                if (acceptText2 && text.startsWith(acceptText2)) return this.#eType.ACCEPTED;
+                if (rejectText && text.includes(rejectText)) return this.#eType.REJECTED;
+                if (dupText1 && text.includes(dupText1)) return this.#eType.DUPLICATE;
+                if (tooCloseText && text.includes(tooCloseText)) return this.#eType.ACCEPTED;
                 const query2 = doc.querySelector('p:nth-child(2)');
-                if (query2 && dupText2 && query2.textContent.trim().includes(dupText2)) return eType.DUPLICATE;
+                if (query2 && dupText2 && query2.textContent.trim().includes(dupText2)) return this.#eType.DUPLICATE;
                 return null;
             }
         };
 
-        const emailParsers = [
+        #emailParsers = [
 
             //  ---------------------------------------- ENGLISH [en] ----------------------------------------
             {
-                // Nomination received (Wayfarer)
-                subject: /^Thanks! Niantic Wayspot nomination received for/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
-            {
                 // Nomination decided (Wayfarer)
                 subject: /^Niantic Wayspot nomination decided for/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'has decided to accept your Wayspot nomination.',
                     'has decided not to accept your Wayspot nomination.'
-                ), image: [ eQuery.WF_DECIDED(
+                ), this.#eStatusHelpers.WF_DECIDED_NIA(
+                    'Congratulations, our team has decided to accept your Wayspot nomination',
+                    'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Thank you for your Wayspot nomination (?<title>.*) on (?<month>) (?<day>\d+), (?<year>\d+)!$/,
-                    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                ) ]
+                    [this.#eMonths.ENGLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Thank you for taking the time to nominate (?<title>.*) on (?<month>) (?<day>\d+), (?<year>\d+)\./,
+                    [this.#eMonths.ENGLISH]
+                )]
             },
             {
                 // Nomination decided (Wayfarer, NIA)
-                subject: /^Decision on you Wayfarer Nomination,/,
-                status: eStatusHelpers.WF_DECIDED_NIA(
-                    undefined, // Accepted - this email template has not been used for acceptances yet
+                subject: /^Decision on your? Wayfarer Nomination,/,
+                status: [this.#eStatusHelpers.WF_DECIDED_NIA(
+                    undefined, // Accepted - this email template was never used for acceptances
                     'did not meet the criteria required to be accepted and has been rejected'
-                ), image: [ eQuery.WF_DECIDED(
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Thank you for taking the time to nominate (?<title>.*) on (?<month>) (?<day>\d+), (?<year>\d+)\./,
-                    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                ) ]
-            },
-            {
-                // Appeal received
-                subject: /^Thanks! Niantic Wayspot appeal received for/,
-                status: () => eType.APPEALED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
+                    [this.#eMonths.ENGLISH]
+                )]
             },
             {
                 // Appeal decided
                 subject: /^Your Niantic Wayspot appeal has been decided for/,
-                status: eStatusHelpers.WF_APPEAL_DECIDED(
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
                     'Niantic has decided that your nomination should be added as a Wayspot',
                     'Niantic has decided that your nomination should not be added as a Wayspot'
-                ), image: [ eQuery.WF_DECIDED(
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Thank you for your Wayspot nomination appeal for (?<title>.*) on (?<month>) (?<day>\d+), (?<year>\d+).$/,
-                    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                ) ]
+                    [this.#eMonths.ENGLISH]
+                )]
             },
             {
                 // Nomination received (Ingress)
                 subject: /^Portal submission confirmation:/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Nomination Photo'), eQuery.ING_TYPE_1, eQuery.ING_TYPE_6(
+                status: [() => this.#eType.NOMINATED],
+                image: [this.#eQuery.IMAGE_ALT('Nomination Photo'), this.#eQuery.ING_TYPE_1, this.#eQuery.ING_TYPE_6(
                     /^Portal submission confirmation: (?<title>.*)$/
-                ) ]
+                )]
             },
             {
                 // Nomination decided (Ingress)
                 subject: /^Portal review complete:/,
-                status: eStatusHelpers.ING_DECIDED(
+                status: [this.#eStatusHelpers.ING_DECIDED(
                     'Good work, Agent:',
                     'Excellent work, Agent.',
                     'we have decided not to accept this candidate.',
                     'your candidate is a duplicate of an existing Portal.',
                     'this candidate is too close to an existing Portal',
                     'Your candidate is a duplicate of either an existing Portal'
-                ), image: [ eQuery.IMAGE_ALT('Nomination Photo'), eQuery.ING_TYPE_1, eQuery.ING_TYPE_2, eQuery.ING_TYPE_5, eQuery.ING_TYPE_4 ]
+                )], image: [this.#eQuery.IMAGE_ALT('Nomination Photo'), this.#eQuery.ING_TYPE_1, this.#eQuery.ING_TYPE_2, this.#eQuery.ING_TYPE_5, this.#eQuery.ING_TYPE_4]
             },
             {
                 // Nomination received (Ingress Redacted)
                 subject: /^Ingress Portal Submitted:/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.ING_TYPE_6(
+                status: [() => this.#eType.NOMINATED],
+                image: [this.#eQuery.ING_TYPE_6(
                     /^Ingress Portal Submitted: (?<title>.*)$/
-                ) ]
+                )]
             },
             {
                 // Nomination duplicated (Ingress Redacted)
                 subject: /^Ingress Portal Duplicate:/,
-                status: () => eType.DUPLICATE,
-                image: [ eQuery.ING_TYPE_3(
-                    eType.DUPLICATE,
+                status: [() => this.#eType.DUPLICATE],
+                image: [this.#eQuery.ING_TYPE_3(
+                    this.#eType.DUPLICATE,
                     /^Ingress Portal Duplicate: (?<title>.*)$/
-                ) ]
+                )]
             },
             {
                 // Nomination accepted (Ingress Redacted)
                 subject: /^Ingress Portal Live:/,
-                status: () => eType.ACCEPTED,
-                image: [ eQuery.ING_TYPE_5 ]
+                status: [() => this.#eType.ACCEPTED],
+                image: [this.#eQuery.ING_TYPE_5]
             },
             {
                 // Nomination rejected (Ingress Redacted)
                 subject: /^Ingress Portal Rejected:/,
-                status: () => eType.REJECTED,
-                image: [ eQuery.ING_TYPE_3(
-                    eType.REJECTED,
+                status: [() => this.#eType.REJECTED],
+                image: [this.#eQuery.ING_TYPE_3(
+                    this.#eType.REJECTED,
                     /^Ingress Portal Rejected: (?<title>.*)$/,
                     'Unfortunately, this Portal is too close to another existing Portal'
-                ) ]
+                )]
             },
             {
                 // Nomination received (PoGo)
                 subject: /^Trainer [^:]+: Thank You for Nominating a PokéStop for Review.$/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.PGO_TYPE_1 ]
+                status: [() => this.#eType.NOMINATED],
+                image: [this.#eQuery.PGO_TYPE_1]
             },
             {
                 // Nomination accepted (PoGo)
                 subject: /^Trainer [^:]+: Your PokéStop Nomination Is Eligible!$/,
-                status: () => eType.ACCEPTED,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
+                status: [() => this.#eType.ACCEPTED],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
             },
             {
                 // Nomination rejected (PoGo)
                 subject: /^Trainer [^:]+: Your PokéStop Nomination Is Ineligible$/,
-                status: () => eType.REJECTED,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
+                status: [() => this.#eType.REJECTED],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
             },
             {
                 // Nomination duplicated (PoGo)
                 subject: /^Trainer [^:]+: Your PokéStop Nomination Review Is Complete:/,
-                status: () => eType.DUPLICATE,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
+                status: [() => this.#eType.DUPLICATE],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
+            },
+
+            //  ---------------------------------------- BENGALI [bn] ----------------------------------------
+            {
+                // Nomination decided (Wayfarer)
+                subject: /-এর জন্য Niantic Wayspot মনোনয়নের সিদ্ধান্ত নেওয়া হয়েছে/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'অনুসারে আপনার Wayspot মনোনয়ন স্বীকার করতে চানদ',
+                    'অনুসারে আপনার Wayspot মনোনয়ন স্বীকার করতে স্বীকার করতে চান না'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'অভিনন্দন, আমাদের দল আপনার Wayspot-এর মনোনয়ন গ্রহণ করার সিদ্ধান্ত নিয়েছেন।',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^(?<month>) (?<day>\d+), (?<year>\d+)-এ আপনার Wayspot মনোনয়ন (?<title>.*) করার জন্য আপনাকে ধন্যবাদ জানাই!$/,
+                    [this.#eMonths.ENGLISH, this.#eMonths.BENGALI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<title>.*)-কে(?<day>\d+) (?<month>), (?<year>\d+) -তে মনোয়ন করতে সময় দেওয়ার জন্য আপনাকে ধন্যবাদ।/,
+                    [this.#eMonths.BENGALI]
+                )]
+            },
+
+            //  ---------------------------------------- CZECH [cs] ----------------------------------------
+            {
+                // Nomination decided (Wayfarer)
+                subject: /^Rozhodnutí o nominaci na Niantic Wayspot pro/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'se rozhodla přijmout vaši nominaci na Wayspot',
+                    'se rozhodla nepřijmout vaši nominaci na Wayspot'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA(
+                    'Gratulujeme, náš tým se rozhodl vaši nominaci na Wayspot přijmout.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^děkujeme za vaši nominaci na Wayspot (?<title>.*) ze dne (?<day>\d+)\. ?(?<month>)\. ?(?<year>\d+)!$/,
+                    [this.#eMonths.NUMERIC]
+                ), this.#eQuery.WF_DECIDED(
+                    /^děkujeme za vaši nominaci (?<title>.*) ze dne (?<day>\d+)\. ?(?<month>)\. ?(?<year>\d+)\./,
+                    [this.#eMonths.NUMERIC]
+                )]
             },
             {
-                // Photo, edit, or report; received or decided (PoGo)
-                subject: /^(Photo Submission|Edit Suggestion|Invalid Pokéstop\/Gym Report) (Accepted|Received|Rejected)$/,
-                ignore: true
-            },
-            {
-                // Photo, edit, or report decided (Wayfarer)
-                subject: /^Niantic Wayspot (edit suggestion|media submission|report) decided for/,
-                ignore: true
-            },
-            {
-                // Photo, edit, or report received (Wayfarer)
-                subject: /^Thanks! Niantic Wayspot (edit suggestion|Photo|report) received for/,
-                ignore: true
-            },
-            {
-                // Photo or edit decided (Ingress)
-                subject: /^Portal (edit|photo) review complete/,
-                ignore: true
-            },
-            {
-                // Edit received (Ingress)
-                subject: /^Portal Edit Suggestion Received$/,
-                ignore: true
-            },
-            {
-                // Photo received (Ingress) or edit received (Ingress OPR)
-                subject: /^Portal (edit|photo) submission confirmation/,
-                ignore: true
-            },
-            {
-                // Report received or decided (Ingress)
-                subject: /^Invalid Ingress Portal report (received|reviewed)$/,
-                ignore: true
-            },
-            {
-                // Ingress Mission related
-                subject: /^Ingress Mission/,
-                ignore: true
-            },
-            {
-                // Ingress damage report
-                subject: /^Ingress Damage Report:/,
-                ignore: true
+                // Appeal decided
+                subject: /^Rozhodnutí o odvolání proti nominaci na Niantic Wayspot pro/,
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
+                    'Niantic se rozhodla, že vaše nominace ACCEPT by měla/by neměla být přidána jako Wayspot',
+                    'Niantic se rozhodla, že vaše nominace REJECT by měla/by neměla být přidána jako Wayspot'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^děkujeme za vaše odvolání proti odmítnutí nominace na Wayspot (?<title>.*) ze dne (?<day>\d+)\. (?<month>)\. (?<year>\d+)\.$/,
+                    [this.#eMonths.NUMERIC]
+                )]
             },
 
             //  ---------------------------------------- GERMAN [de] ----------------------------------------
             {
-                // Nomination received (Wayfarer)
-                subject: /^Danke! Wir haben deinen Vorschlag für den Wayspot/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
-            {
                 // Nomination decided (Wayfarer)
                 subject: /^Entscheidung zum Wayspot-Vorschlag/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'hat entschieden, deinen Wayspot-Vorschlag zu akzeptieren.',
                     'hat entschieden, deinen Wayspot-Vorschlag nicht zu akzeptieren.'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^danke, dass du den Wayspot-Vorschlag (?<title>.*) am (?<day>\d+)\.(?<month>)\.(?<year>\d+) eingereicht hast.$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
-            },
-            {
-                // Appeal received
-                subject: /^Danke! Wir haben deinen Einspruch für den Wayspot/,
-                status: () => eType.APPEALED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Glückwunsch, unser Team hat entschieden, deinen Wayspot-Vorschlag zu akzeptieren.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^danke, dass du den Wayspot-Vorschlag (?<title>.*) am (?<day>\d+)\.(?<month>)\.(?<year>\d+) eingereicht hast\.$/,
+                    [this.#eMonths.ZERO_PREFIXED]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Danke, dass du dir die Zeit genommen hast, (?<title>.*) am (?<day>\d+)\.(?<month>)\.(?<year>\d+) vorzuschlagen\./,
+                    [this.#eMonths.ZERO_PREFIXED]
+                )]
             },
             {
                 // Appeal decided
                 subject: /^Entscheidung zum Einspruch für den Wayspot/,
-                status: eStatusHelpers.WF_APPEAL_DECIDED(
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
                     'Niantic hat entschieden, dass dein Vorschlag ein Wayspot werden sollte.',
                     'Niantic hat entschieden, dass dein Vorschlag kein Wayspot werden sollte.'
-                ), image: [ eQuery.WF_DECIDED(
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^danke, dass du am (?<day>\d+)\.(?<month>)\.(?<year>\d+) einen Einspruch für den Wayspot (?<title>.*) eingereicht hast.$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
+                    [this.#eMonths.ZERO_PREFIXED]
+                )]
             },
             {
                 // Nomination received (Ingress)
                 subject: /^Empfangsbestätigung deines eingereichten Portalvorschlags:/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Nomination Photo'), eQuery.ING_TYPE_1 ]
+                status: [() => this.#eType.NOMINATED],
+                image: [this.#eQuery.IMAGE_ALT('Nomination Photo'), this.#eQuery.ING_TYPE_1]
             },
             {
                 // Nomination decided (Ingress)
                 subject: /^Überprüfung des Portals abgeschlossen:/,
-                status: eStatusHelpers.ING_DECIDED(
+                status: [this.#eStatusHelpers.ING_DECIDED(
                     'Gute Arbeit, Agent!',
                     'Hervorragende Arbeit, Agent.',
                     'konnten wir deinen Vorschlag jedoch nicht annehmen.',
                     'Leider ist dieses Portal bereits vorhanden',
                     undefined //'this candidate is too close to an existing Portal.'
-                ), image: [ eQuery.IMAGE_ALT('Nomination Photo'), eQuery.ING_TYPE_1, eQuery.ING_TYPE_2 ]
+                )], image: [this.#eQuery.IMAGE_ALT('Nomination Photo'), this.#eQuery.ING_TYPE_1, this.#eQuery.ING_TYPE_2]
             },
             {
                 // Nomination received (PoGo)
                 subject: /^Trainer [^:]+: Danke, dass du einen PokéStop zur Überprüfung vorgeschlagen hast$/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.PGO_TYPE_1 ]
+                status: [() => this.#eType.NOMINATED],
+                image: [this.#eQuery.PGO_TYPE_1]
             },
             {
                 // Nomination accepted (PoGo)
                 subject: /^Trainer [^:]+: Dein vorgeschlagener PokéStop ist zulässig!$/,
-                status: () => eType.ACCEPTED,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
+                status: [() => this.#eType.ACCEPTED],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
             },
             {
                 // Nomination rejected (PoGo)
                 subject: /^Trainer [^:]+: Dein vorgeschlagener PokéStop ist nicht zulässig$/,
-                status: () => eType.REJECTED,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
+                status: [() => this.#eType.REJECTED],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
             },
             {
                 // Nomination duplicated (PoGo)
                 subject: /^Trainer [^:]+: Die Prüfung deines PokéStop-Vorschlags wurde abgeschlossen:/,
-                status: () => eType.DUPLICATE,
-                image: [ eQuery.PGO_TYPE_1, eQuery.PGO_TYPE_2 ]
-            },
-            {
-                // Photo, edit, or report; received or decided (PoGo)
-                subject: /^(Fotovorschlag|Vorschlag für Bearbeitung|Meldung zu unzulässigen PokéStop\/Arena) (akzeptiert|abgelehnt|erhalten)$/,
-                ignore: true
-            },
-            {
-                // Photo, edit, or report decided (Wayfarer)
-                subject: /^Danke! Wir haben (den Upload Photo|deine Meldung|deinen Änderungsvorschlag) für den Wayspot/,
-                ignore: true
-            },
-            {
-                // Photo, edit, or report received (Wayfarer)
-                subject: /^Entscheidung zu (deinem Upload|deiner Meldung|deinem Änderungsvorschlag) für den Wayspot/,
-                ignore: true
-            },
-            {
-                // Photo or edit decided (Ingress)
-                subject: /^Überprüfung des (Vorschlags zur Änderung eines Portals|Portalfotos) abgeschlossen/,
-                ignore: true
-            },
-            {
-                // Photo or edit received (Ingress)
-                subject: /^(Vorschlag für die Änderung eines Portals|Portalfotovorschlag) erhalten/,
-                ignore: true
-            },
-            {
-                // Report received or decided (Ingress)
-                subject: /^Meldung zu ungültigem Ingress-Portal (erhalten|geprüft)$/,
-                ignore: true
+                status: [() => this.#eType.DUPLICATE],
+                image: [this.#eQuery.PGO_TYPE_1, this.#eQuery.PGO_TYPE_2]
             },
 
             //  ---------------------------------------- SPANISH [es] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^¡Gracias! ¡Hemos recibido la propuesta de Wayspot de Niantic/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Decisión tomada sobre la propuesta de Wayspot de Niantic/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'ha decidido aceptartu propuesta de Wayspot.',
                     'ha decidido no aceptar tu propuesta de Wayspot.'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^¡Gracias por tu propuesta de Wayspot (?<title>.*) enviada el (?<day>\d+)-(?<month>)-(?<year>\d+)!$/,
-                    ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic']
-                ) ]
-            },
-            {
-                // Appeal received
-                subject: /^¡Gracias! ¡Recurso de Wayspot de Niantic recibido para/,
-                status: () => eType.APPEALED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Enhorabuena, nuestro equipo ha decidido aceptar tu propuesta de Wayspot.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^¡Gracias por tu propuesta de Wayspot (?<title>.*) enviada el (?<day>\d+)[- ](?<month>)(-|\. )(?<year>\d+)!$/,
+                    [this.#eMonths.SPANISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Gracias por dedicar algo de tiempo para realizar tu propuesta de (?<title>.*) el (?<day>\d+) (?<month>)\. (?<year>\d+)\./,
+                    [this.#eMonths.SPANISH]
+                )]
             },
 
             //  ---------------------------------------- FRENCH [fr] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^Remerciements ! Proposition d’un Wayspot Niantic reçue pour/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Résultat concernant la proposition du Wayspot Niantic/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'a décidé d’accepter votre proposition de Wayspot.',
-                    undefined //'has decided not to accept your Wayspot nomination.'
-                ), image: [ eQuery.WF_DECIDED(
+                    'a décidé de ne pas accepter votre proposition de Wayspot.'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Félicitations, notre équipe a décidé d’accepter votre proposition de Wayspot.',
+                    'Malheureusement, l’équipe a décidé de ne pas accepter votre proposition de Wayspot.'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Merci pour votre proposition de Wayspot (?<title>.*) le (?<day>\d+) (?<month>)\.? (?<year>\d+)\u2009!$/,
-                    ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc']
-                ) ]
+                    [this.#eMonths.FRENCH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Merci d’avoir pris le temps de nous envoyer votre proposition (?<title>.*) le (?<day>\d+) (?<month>)\. (?<year>\d+)\./,
+                    [this.#eMonths.FRENCH]
+                )]
             },
 
             //  ---------------------------------------- HINDI [hi] ----------------------------------------
-            // MISSING:
-            // Nomination received (Wayfarer)
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Niantic Wayspot का नामांकन .* के लिए तय किया गया$/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'ने को आपके Wayspot नामांकन को स्वीकार करने का निर्णय लिया है',
                     'ने को आपके Wayspot नामांकन को अस्वीकार करने का निर्णय लिया है'
-                ), image: [ eQuery.WF_DECIDED(
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'बधाई हो, हमारी टीम ने आपके Wayspot नामांकन को मंज़ूरी दे दी है.',
+                    'खेद है कि हमारी टीम ने आपका Wayspot नामांकन नामंज़ूर कर दिया है.'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^(?<month>) (?<day>\d+), (?<year>\d+) पर Wayspot नामांकन (?<title>.*) के लिए धन्यवाद!$/,
-                    ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                ) ]
+                    [this.#eMonths.ENGLISH, this.#eMonths.HINDI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<day>\d+) (?<month>) (?<year>\d+) पर Wayspot नामांकन (?<title>.*) के लिए धन्यवाद!$/,
+                    [this.#eMonths.ENGLISH, this.#eMonths.HINDI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<day>\d+) (?<month>) (?<year>\d+) को (?<title>.*)  के नामांकन के लिए आपने समय निकाला, उसके लिए आपका धन्यवाद\./,
+                    [this.#eMonths.HINDI]
+                )]
             },
 
             //  ---------------------------------------- ITALIAN [it] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^Grazie! Abbiamo ricevuto una candidatura di Niantic Wayspot per/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Proposta di Niantic Wayspot decisa per/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'Congratulazioni, la tua proposta di Wayspot è stata accettata',
                     'Sfortunatamente, la tua proposta di Wayspot è stata respinta'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^Grazie per la proposta di Wayspot (?<title>.*) in data (?<day>\d+)-(?<month>)-(?<year>\d+).$/,
-                    ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic']
-                ) ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Congratulazioni, il nostro team ha deciso di accettare la tua proposta di Wayspot.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Grazie per la proposta di Wayspot (?<title>.*) in data (?<day>\d+)[ -](?<month>)[ -](?<year>\d+)\.$/,
+                    [this.#eMonths.ITALIAN]
+                ), this.#eQuery.WF_DECIDED(
+                    /^grazie per aver trovato il tempo di inviare la tua proposta (?<title>.*) in data (?<day>\d+) (?<month>) (?<year>\d+)\./,
+                    [this.#eMonths.ITALIAN]
+                )]
             },
 
-            //  ---------------------------------------- JAPANESE [jp] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^ありがとうございます。 Niantic Wayspotの申請「.*」が受領されました。$/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
+            //  ---------------------------------------- JAPANESE [ja] ----------------------------------------
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Niantic Wayspotの申請「.*」が決定しました。$/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'コミュニティはあなたのWayspot候補を承認しました。',
                     '不幸にも コミュニティはあなたのWayspot候補を承認しませんでした。'
-                ), image: [ eQuery.WF_DECIDED(
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'チームでの検討の結果、あなたのお送りいただいたWayspot候補が採用されましたので、お知らせいたします。',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^(?<year>\d+)\/(?<month>)\/(?<day>\d+)にWayspot申請「(?<title>.*)」をご提出いただき、ありがとうございました。$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
+                    [this.#eMonths.ZERO_PREFIXED]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<year>\d+)\/(?<month>)\/(?<day>\d+)に「(?<title>.*)」を候補としてお送りいただき、ありがとうございました。/,
+                    [this.#eMonths.ZERO_PREFIXED]
+                )]
+            },
+            {
+                // Appeal decided
+                subject: /^Niantic Wayspot「.*」に関する申し立てが決定しました。$/,
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
+                    'Nianticはあなたが申請された候補をWayspotに追加する定しました。',
+                    undefined // 'Niantic has decided that your nomination should not be added as a Wayspot'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^(?<year>\d+)\/(?<month>)\/(?<day>\d+)にWayspot「(?<title>.*)」に関する申し立てをご提出いただき、ありがとうございました。$/,
+                    [this.#eMonths.ZERO_PREFIXED]
+                )]
             },
 
-            //  ---------------------------------------- KOREAN [kr] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^감사합니다! .*에 대한 Niantic Wayspot 후보 신청이 완료되었습니다!$/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
+            //  ---------------------------------------- KOREAN [ko] ----------------------------------------
             {
                 // Nomination decided (Wayfarer)
                 subject: /에 대한 Niantic Wayspot 후보 결정이 완료됨$/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    '제안한 Wayspot 후보를 승인했습니다',
                     '제안한 Wayspot 후보를 승인하지않았습니다 .'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^(?<year>\d+). (?<month>). (?<day>\d+)에 Wayspot 후보 (?<title>.*)을\(를\) 제출해 주셔서 감사드립니다!$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    '축하합니다, 귀하께서 추천하신 Wayspot 후보가 승인되었습니다\.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^(?<year>\d+)\. (?<month>)\. (?<day>\d+)\.?에 Wayspot 후보 (?<title>.*)을\(를\) 제출해 주셔서 감사드립니다!$/,
+                    [this.#eMonths.NUMERIC]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<year>\d+)\. (?<month>)\. (?<day>\d+)\.?에 시간을 내어 (?<title>.*) \(을\)를 추천해 주셔서 감사합니다\./,
+                    [this.#eMonths.NUMERIC]
+                )]
+            },
+
+            //  ---------------------------------------- MARATHI [mr] ----------------------------------------
+            {
+                // Nomination decided (Wayfarer)
+                subject: /^Niantic वेस्पॉट नामांकन .* साठी निश्चित केले$/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'तुमचे Wayspot नामांकन स्वीकारण्याचा निर्णय घेतला आहे',
+                    'तुमचे Wayspot नामांकन न स्वीकारण्याचा निर्णय घेतला आहे'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'अभिनंदन, आमच्या टीमने तुमचे Wayspot नामांकन स्वीकारण्याचा निर्णय घेतला आहे\.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^तुमच्या (?<month>) (?<day>\d+), (?<year>\d+) रोजी वेस्पॉट नामांकन (?<title>.*) साठी धन्यवाद!$/,
+                    [this.#eMonths.ENGLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^तुमच्या (?<day>\d+) (?<month>), (?<year>\d+) रोजी वेस्पॉट नामांकन (?<title>.*) साठी धन्यवाद!$/,
+                    [this.#eMonths.MARATHI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<day>\d+) (?<month>), (?<year>\d+) तारखेला (?<title>.*)  वर नामांकन करण्यासाठी वेळ दिल्याबद्दल धन्यवाद\./,
+                    [this.#eMonths.MARATHI]
+                )]
+            },
+            {
+                // Appeal decided
+                subject: /^तुमचे Niantic वेस्पॉट आवाहन .* साठी निश्चित करण्यात आले आहे$/,
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
+                    'Niantic ने ठरवले आहे की तुमचे नामांकन ACCEPT वेस्पॉट म्हणून जोडले जाऊ नये/नसावे',
+                    'Niantic ने ठरवले आहे की तुमचे नामांकन REJECT वेस्पॉट म्हणून जोडले जाऊ नये/नसावे'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^(?<month>) (?<day>\d+), (?<year>\d+) रोजी (?<title>.*) साठी तुमच्या वेस्पॉट नामांकन आवाहनाबद्दल धन्यवाद.$/,
+                    [this.#eMonths.ENGLISH, this.#eMonths.MARATHI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<day>\d+) (?<month>), (?<year>\d+) रोजी (?<title>.*) साठी तुमच्या वेस्पॉट नामांकन आवाहनाबद्दल धन्यवाद.$/,
+                    [this.#eMonths.ENGLISH, this.#eMonths.MARATHI]
+                )]
             },
 
             //  ---------------------------------------- DUTCH [nl] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^Bedankt! Niantic Wayspot-nominatie ontvangen voor/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Besluit over Niantic Wayspot-nominatie voor/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'heeft besloten om je Wayspot-nominatie wel te accepteren.',
                     'heeft besloten om je Wayspot-nominatie niet te accepteren.'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^Bedankt voor je Wayspot-nominatie (?<title>.*) op (?<day>\d+)-(?<month>)-(?<year>\d+)!$/,
-                    ['jan', 'feb', 'mrt', 'apr', 'mei', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec']
-                ) ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Gefeliciteerd, ons team heeft besloten je Wayspot-nominatie te accepteren.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Bedankt voor je Wayspot-nominatie (?<title>.*) op (?<day>\d+)[- ](?<month>)(-|\. )(?<year>\d+)!$/,
+                    [this.#eMonths.DUTCH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Bedankt dat je de tijd hebt genomen om (?<title>.*) te nomineren op (?<day>\d+) (?<month>)\. (?<year>\d+)\./,
+                    [this.#eMonths.DUTCH]
+                )]
             },
 
             //  ---------------------------------------- NORWEGIAN [no] ----------------------------------------
-            // MISSING:
-            // Nomination received (Wayfarer)
-            // Nomination decided (Wayfarer)
-            // Appeal received
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
+            {
+                // Nomination decided (Wayfarer)
+                subject: /^En avgjørelse er tatt for Niantic Wayspot-nominasjonen for/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'har valgt å godta Wayspot-nominasjonen din.',
+                    'har valgt å avvise Wayspot-nominasjonen din.'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Takk for Wayspot-nominasjonen (?<title>.*), som du sendte inn (?<day>\d+)\.(?<month>)\.(?<year>\d+)!$/,
+                    [this.#eMonths.NORWEGIAN]
+                )]
+            },
             {
                 // Appeal decided
                 subject: /^En avgjørelse er tatt for Niantic Wayspot-klagen for/,
-                status: eStatusHelpers.WF_APPEAL_DECIDED(
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
                     'Niantic har valgt å legge til nominasjonen som en Wayspot',
-                    undefined //'Niantic has decided that your nomination should not be added as a Wayspot'
-                ), image: [ eQuery.WF_DECIDED(
+                    'Niantic har valgt ikke legge til nominasjonen som en Wayspot'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Takk for klagen i forbindelse med Wayspot-nominasjonen (?<title>.*), som du sendte inn (?<day>\d+)\.(?<month>)\.(?<year>\d+).$/,
-                    ['jan', 'feb', 'mar', 'apr', 'mai', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'des']
-                ) ]
+                    [this.#eMonths.NORWEGIAN]
+                )]
             },
 
-            //  ---------------------------------------- PORTUGESE [pt] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
+            //  ---------------------------------------- POLISH [pl] ----------------------------------------
             {
-                // Nomination received (Wayfarer)
-                subject: /^Agradecemos a sua indicação para o Niantic Wayspot/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
+                // Nomination decided (Wayfarer)
+                subject: /^Podjęto decyzję na temat nominacji Wayspotu/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'zdecydowała zaakceptować nominacji Wayspotu.',
+                    'zdecydowała nie przyjąć nominacji Wayspotu.'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Gratulację, nasz zespół zaakceptował Twoją nominację Punktu trasy.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Dziękujemy za nominowanie Wayspotu „(?<title>.*)” (?<year>\d+)-(?<month>)-(?<day>\d+).$/,
+                    [this.#eMonths.ZERO_PREFIXED, this.#eMonths.POLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Dziękujemy za nominowanie Wayspotu „(?<title>.*)” (?<day>\d+) (?<month>) (?<year>\d+).$/,
+                    [this.#eMonths.POLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Dziękujemy za poświęcenie czasu na przesłanie nominacji (?<title>.*)  (?<day>\d+) (?<month>) (?<year>\d+)\./,
+                    [this.#eMonths.POLISH]
+                )]
             },
+
+            //  ---------------------------------------- PORTUGUESE [pt] ----------------------------------------
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Decisão sobre a indicação do Niantic Wayspot/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'a comunidade decidiu aceitar a sua indicação de Wayspot.',
-                    undefined //'has decided not to accept your Wayspot nomination.'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^Agradecemos a sua indicação do Wayspot (?<title>.*) em (?<day>\d+)\/(?<month>)\/(?<year>\d+).$/,
-                    ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
-                ) ]
+                    'a comunidade decidiu recusar a sua indicação de Wayspot.'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Parabéns! Nossa equipe aceitou sua indicação de Wayspot.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Agradecemos a sua indicação do Wayspot (?<title>.*) em (?<day>\d+)(\/| de )(?<month>)(\/| de )(?<year>\d+).$/,
+                    [this.#eMonths.PORTUGUESE]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Agradecemos por indicar (?<title>.*) em (?<day>\d+) de (?<month>) de (?<year>\d+)\./,
+                    [this.#eMonths.PORTUGUESE]
+                )]
             },
 
             //  ---------------------------------------- RUSSIAN [ru] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^Спасибо! Номинация Niantic Wayspot для .* получена!$/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Вынесено решение по номинации Niantic Wayspot для/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'решило принять вашу номинацию Wayspot.',
                     'решило отклонить вашу номинацию Wayspot.'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^Благодарим за то, что отправили номинацию Wayfarer (?<title>.*) (?<day>\d+)\.(?<month>)\.(?<year>\d+)!$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Поздравляем, наша команда решила принять вашу номинацию Wayspot.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Благодарим за то, что отправили номинацию Wayfarer (?<title>.*) (?<day>\d+)[\. ](?<month>)[\. ](?<year>\d+)( г)?!$/,
+                    [this.#eMonths.ZERO_PREFIXED, this.#eMonths.RUSSIAN]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Благодарим вас за то, что нашли время выдвинуть номинацию (?<title>.*)  (?<day>\d+) (?<month>) (?<year>\d+) г\./,
+                    [this.#eMonths.RUSSIAN]
+                )]
             },
 
             //  ---------------------------------------- SWEDISH [sv] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^Tack! Niantic Wayspot-nominering har tagits emot för/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^Niantic Wayspot-nominering har beslutats om för/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     'har beslutat att accepteradin Wayspot-nominering.',
                     'har beslutat att inte acceptera din Wayspot-nominering.'
-                ), image: [ eQuery.WF_DECIDED(
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'Grattis, vårt team har beslutat att acceptera din Wayspot-nominering.',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^Tack för din Wayspot-nominering (?<title>.*) den (?<year>\d+)-(?<month>)-(?<day>\d+)!$/,
-                    ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec']
-                ) ]
+                    [this.#eMonths.SWEDISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Tack för din Wayspot-nominering (?<title>.*) den (?<day>\d+) (?<month>)\. (?<year>\d+)!$/,
+                    [this.#eMonths.SWEDISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Tack för att du tog dig tiden att nominera (?<title>.*) den (?<day>\d+) (?<month>)\. (?<year>\d+)\./,
+                    [this.#eMonths.SWEDISH]
+                )]
             },
             {
                 // Appeal decided
                 subject: /^Din Niantic Wayspot-överklagan har beslutats om för/,
-                status: eStatusHelpers.WF_APPEAL_DECIDED(
+                status: [this.#eStatusHelpers.WF_APPEAL_DECIDED(
                     'Niantic har beslutat att din nominering ACCEPT ska/inte ska läggas till som en Wayspot',
-                    undefined //'Niantic has decided that your nomination should not be added as a Wayspot'
-                ), image: [ eQuery.WF_DECIDED(
-                    /^Tack för överklagan för din Wayspot-nominering för (?<title>.*) den (?<year>\d+)-(?<month>)-(?<day>\d+).$/,
-                    ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec']
-                ) ]
+                    'Niantic har beslutat att din nominering REJECT ska/inte ska läggas till som en Wayspot'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^Tack för överklagan för din Wayspot-nominering för (?<title>.*) den (?<year>\d+)-(?<month>)-(?<day>\d+)\.$/,
+                    [this.#eMonths.SWEDISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Tack för överklagan för din Wayspot-nominering för (?<title>.*) den (?<day>\d+) (?<month>)\. (?<year>\d+)\.$/,
+                    [this.#eMonths.SWEDISH]
+                )]
+            },
+
+            //  ---------------------------------------- TAMIL [ta] ----------------------------------------
+            {
+                // Nomination decided (Wayfarer)
+                subject: /-க்கான Niantic Wayspot பணிந்துரை பரிசீலிக்கப்பட்டது.$/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'உங்கள் Wayspot பரிந்துரையை ஏற்றுக்கொள்வதாக முடிவு செய்திருக்கிறது',
+                    'உங்கள் Wayspot பரிந்துரையை நிராகரிப்பதாக முடிவு செய்திருக்கிறது'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA(
+                    'did not meet the criteria required to be accepted and has been rejected', // Actually acceptance, bugged template
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^நாளது தேதியில் (?<month>) (?<day>\d+), (?<year>\d+), (?<title>.*) -க்கான Wayspot பரிந்துரைக்கு நன்றி!$/,
+                    [this.#eMonths.ENGLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^நாளது தேதியில் (?<day>\d+) (?<month>), (?<year>\d+), (?<title>.*) -க்கான Wayspot பரிந்துரைக்கு நன்றி!$/,
+                    [this.#eMonths.TAMIL]
+                ), this.#eQuery.WF_DECIDED(
+                    /^Thank you for taking the time to nominate (?<title>.*) on (?<day>\d+) (?<month>), (?<year>\d+)\./,
+                    [this.#eMonths.TAMIL]
+                )]
+            },
+
+            //  ---------------------------------------- TELUGU [te] ----------------------------------------
+            {
+                // Nomination decided (Wayfarer)
+                subject: /కొరకు Niantic వేస్పాట్ నామినేషన్‌‌పై నిర్ణయం$/,
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'మీ వేస్పాట్ నామినేషన్‌ను అంగీకరించడానికి ఉండటానికి',
+                    undefined //'has decided not to accept your Wayspot nomination.',
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'శుభాకాంక్షలు, మీ Wayspot నామినేషన్‌ ఆమోదించాలని మా టీమ్ నిర్ణయించింది',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
+                    /^(?<month>) (?<day>\d+), (?<year>\d+) తేదీన మీరు అందించిన వేస్పాట్ నామినేషన్ (?<title>.*) ను బట్టి ధన్యవాదాలు!$/,
+                    [this.#eMonths.ENGLISH]
+                ), this.#eQuery.WF_DECIDED(
+                    /^(?<day>\d+) (?<month>), (?<year>\d+) తేదీన మీరు అందించిన వేస్పాట్ నామినేషన్ (?<title>.*) ను బట్టి ధన్యవాదాలు!$/,
+                    [this.#eMonths.TELUGU]
+                ), this.#eQuery.WF_DECIDED(
+                    /^నామినేట్ చేయడానికి సమయం వెచ్చించినందుకు ధన్యవాదాలు (?<title>.*) on (?<day>\d+) (?<month>), (?<year>\d+)\./,
+                    [this.#eMonths.TELUGU]
+                )]
             },
 
             //  ---------------------------------------- THAI [th] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^ขอบคุณ! เราได้รับการเสนอสถานที่ Niantic Wayspot สำหรับ/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^ผลการตัดสินการเสนอสถานที่ Niantic Wayspot สำหรับ/,
-                status: eStatusHelpers.WF_DECIDED(
-                    undefined, //'has decided to accept your Wayspot nomination.',
+                status: [this.#eStatusHelpers.WF_DECIDED(
+                    'ชุมชนได้ตัดสินใจ ยอมรับ Wayspot ของคุณ',
                     'ชุมชนได้ตัดสินใจ ไม่ยอมรับการ Wayspot ของคุณ'
-                ), image: [ eQuery.WF_DECIDED(
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    'ขอแสดงความยินดีด้วย ทีมงานของเราได้ตัดสินใจยอมรับการเสนอ Wayspot ของคุณแล้ว',
+                    'ขออภัย ทีมงานของเราได้ตัดสินใจที่จะไม่ยอมรับการเสนอ Wayspot ของคุณ'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^ขอบคุณสำหรับการเสนอสถานที่ Wayspot ของคุณ เรื่อง (?<title>.*) เมื่อวันที่ (?<day>\d+) (?<month>) (?<year>\d+)!$/,
-                    ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
-                ) ]
+                    [this.#eMonths.THAI]
+                ), this.#eQuery.WF_DECIDED(
+                    /^ขอบคุณที่สละเวลาเสนอ (?<title>.*) ในวันที่ (?<day>\d+) (?<month>) (?<year>\d+)/,
+                    [this.#eMonths.THAI]
+                )]
             },
 
             //  ---------------------------------------- CHINESE [zh] ----------------------------------------
-            // MISSING:
-            // Appeal received
-            // Appeal decided
-            // Nomination received (Ingress)
-            // Nomination decided (Ingress)
-            // Nomination received (PoGo)
-            // Nomination accepted (PoGo)
-            // Nomination rejected (PoGo)
-            // Nomination duplicated (PoGo)
-            // Photo, edit, or report; received or decided (PoGo)
-            // Photo, edit, or report decided (Wayfarer)
-            // Photo, edit, or report received (Wayfarer)
-            // Photo or edit decided (Ingress)
-            // Edit received (Ingress)
-            // Photo received (Ingress)
-            // Report received or decided (Ingress)
-            // Ingress Mission related
-            // Ingress damage report
-            {
-                // Nomination received (Wayfarer)
-                subject: /^感謝你！ 我們已收到 Niantic Wayspot 候選/,
-                status: () => eType.NOMINATED,
-                image: [ eQuery.IMAGE_ALT('Submission Photo') ]
-            },
             {
                 // Nomination decided (Wayfarer)
                 subject: /^社群已對 Niantic Wayspot 候選 .* 做出決定$/,
-                status: eStatusHelpers.WF_DECIDED(
+                status: [this.#eStatusHelpers.WF_DECIDED(
                     '社群已決定 接受 Wayspot 候選地。',
-                    undefined //'has decided not to accept your Wayspot nomination.'
-                ), image: [ eQuery.WF_DECIDED(
+                    '社群已決定 不接受你的 Wayspot 候選地。'
+                ), this.#eStatusHelpers.WF_DECIDED_NIA_2(
+                    '您的Wayspot提名地點已通過團隊審查，在此誠摯恭喜您！',
+                    undefined //'did not meet the criteria required to be accepted and has been rejected'
+                )], image: [this.#eQuery.WF_DECIDED(
                     /^感謝你在 (?<year>\d+)-(?<month>)-(?<day>\d+) 提交 Wayspot 候選 (?<title>.*)！$/,
-                    ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
-                ) ]
+                    [this.#eMonths.NUMERIC]
+                ), this.#eQuery.WF_DECIDED(
+                    /^感謝你在 (?<year>\d+)年(?<month>)月(?<day>\d+)日 提交 Wayspot 候選 (?<title>.*)！$/,
+                    [this.#eMonths.NUMERIC]
+                ), this.#eQuery.WF_DECIDED(
+                    /^感謝您於(?<year>\d+)年(?<month>)月(?<day>\d+)日提交提名地點：(?<title>.*)。 為了構築獨一無二的AR世界地圖，並且打造所有人都能身歷其境的冒險體驗，像您這樣的探索者是不可或缺的關鍵之一。/,
+                    [this.#eMonths.NUMERIC]
+                )]
             },
         ];
 
-        const parsedChanges = {};
-        const parseFailures = [];
-        const skippedEmails = [];
-        const parsedIDs = [];
+        #eProcessingStatus = {
+            SUCCESS: 0,
+            SKIPPED: 1,
+            UNSUPPORTED: 2,
+            AMBIGUOUS: 3,
+            FAILURE: 4,
+            UNCHANGED: 5,
+        };
 
-        const dp = new DOMParser();
-        const supportedSenders = [
-            'notices@wayfarer.nianticlabs.com',
-            'nominations@portals.ingress.com',
-            'hello@pokemongolive.com',
-            'ingress-support@google.com',
-            'ingress-support@nianticlabs.com'
-        ];
-        let i = 0;
-        for await (const file of files()) {
-            i++;
-            progress(i + 1, fileCount);
-            const content = file.contents;
-            const mime = parseMIME(content);
-            if (!mime) {
-                skippedEmails.push({
-                    id: file.id,
-                    file: file.name,
-                    reason: `This file does not appear to be an email in MIME format (invalid RFC 822 data).`
-                });
-                continue;
-            }
-            const [ headers, mimeBody ] = mime;
+        #submissions;
+        #db = null;
+        #statusHistory = null;
+        #errors = null;
+        #stats = null;
+        #messageStatus = null;
 
-            const fh = {};
-            for (const i of ['subject', 'date', 'from', 'content-transfer-encoding', 'content-type']) {
-                const matching = headers.filter(e => e[0].toLowerCase() == i);
-                fh[i] = matching.length ? matching.pop()[1] : null;
-            }
+        constructor(submissions) {
+            this.#submissions = submissions;
+        }
 
-            const emailAddress = extractEmail(fh.from);
-            if (!supportedSenders.includes(emailAddress)) {
-                skippedEmails.push({
-                    id: file.id,
-                    file: file.name,
-                    subject: fh.subject,
-                    date: fh.date,
-                    reason: `Sender "${fh.name}" was not recognized as a valid Niantic Wayfarer or OPR-related email address.`
-                });
-                continue;
-            } else if (emailAddress == "hello@pokemongolive.com" && new Date(fh.date).getUTCFullYear() <= 2018) {
-                // Newsletters used this email address for some time up until late 2018, which was before this game got Wayfarer/OPR access
-                skippedEmails.push({
-                    id: file.id,
-                    file: file.name,
-                    subject: fh.subject,
-                    date: fh.date,
-                    reason: `The email was classified as a Pokémon Go newsletter.`
-                });
-                continue;
-            }
-
-            let htmlBody = null, charset = null;
-            const ct = parseContentType(fh['content-type']);
-            if (fh['content-transfer-encoding'] == null && ct.type == 'multipart/alternative') {
-                // Multipart message - extract the HTML part
-                mimeBody.split(`--${ct.params.boundary}`).forEach(part => {
-                    const partMime = parseMIME(part);
-                    if (!partMime) return;
-                    const [ partHead, partBody ] = partMime;
-                    if (!partBody.trim().length) return;
-                    for (const i of ['content-transfer-encoding', 'content-type']) {
-                        const matching = partHead.filter(e => e[0].toLowerCase() == i);
-                        fh[i] = matching.length ? matching.pop()[1] : null;
+        async open() {
+            await new Promise(async resolve => {
+                this.#db = await getIDBInstance();
+                const tx = this.#db.transaction([OBJECT_STORE_NAME], "readonly");
+                const objectStore = tx.objectStore(OBJECT_STORE_NAME);
+                const getList = objectStore.getAll();
+                getList.onsuccess = () => {
+                    this.#statusHistory = {};
+                    this.#errors = [];
+                    this.#stats = [];
+                    const eV1State = localStorage.hasOwnProperty('wfnshV1ProcessedEmailStates')
+                        ? JSON.parse(localStorage.wfnshV1ProcessedEmailStates)
+                        : { version: eV1ProcessingStateVersion, states: {} };
+                    this.#messageStatus = eV1State.states;
+                    if (eV1State.version < eV1CutoffEverything) {
+                        this.#messageStatus = {};
                     }
-                    if (fh['content-type'] === null) return;
-                    const partCT = parseContentType(fh['content-type']);
-                    if (fh['content-transfer-encoding'] && fh['content-transfer-encoding'].toLowerCase() == 'quoted-printable' && partCT.type == 'text/html') {
-                        htmlBody = partBody;
-                        charset = (partCT.params.charset || 'utf-8').toLowerCase();
+                    const stateKeys = Object.keys(this.#messageStatus);
+                    if (eV1State.version < eV1CutoffParseErrors) {
+                        for (let i = 0; i < stateKeys.length; i++) {
+                            // Reprocess old failures due to bugfixes and template additions
+                            if (this.#messageStatus[stateKeys[i]] == this.#eProcessingStatus.UNSUPPORTED) delete this.#messageStatus[stateKeys[i]];
+                            if (this.#messageStatus[stateKeys[i]] == this.#eProcessingStatus.FAILURE) delete this.#messageStatus[stateKeys[i]];
+                        }
+                    }
+                    const counters = Object.keys(this.#eProcessingStatus).length;
+                    for (let i = 0; i < counters; i++) this.#stats.push(0);
+                    getList.result.forEach(e => { this.#statusHistory[e.id] = e.statusHistory });
+                    resolve();
+                };
+            });
+        }
+
+        async close(withNotification) {
+            this.#db.close();
+            const total = this.#stats.reduce((a, b) => a + b);
+            const cUpdated = this.#stats[this.#eProcessingStatus.SUCCESS];
+            const cUnchanged = this.#stats[this.#eProcessingStatus.UNCHANGED];
+            const cSkipped = this.#stats[this.#eProcessingStatus.SKIPPED];
+            const cAmbiguous = this.#stats[this.#eProcessingStatus.AMBIGUOUS];
+            const cErrors = this.#stats[this.#eProcessingStatus.FAILURE] + this.#stats[this.#eProcessingStatus.UNSUPPORTED];
+            if (withNotification || cUpdated || cAmbiguous) {
+                createNotification(`${total} emails from Email API were processed by Nomination Status History (of which ${cUpdated} change(s), ${cUnchanged} unchanged, ${cSkipped} skipped, ${cAmbiguous} unmatched, and ${cErrors} error(s)).`, "gray");
+            }
+            if (errorReportingPrompt && this.#errors.length) {
+                const errors = { errors: this.#errors };
+                try {
+                    if (GM_info) {
+                        errors.version = GM_info.script.version;
+                    }
+                } catch (e) {
+                }
+                const anchorp = document.createElement('p');
+                const aReport = document.createElement('a');
+                aReport.textContent = 'Submit report';
+                aReport.addEventListener('click', () => {
+                    if (confirm(
+                        'Thank you for helping further the development of the Nomination Status History plugin!\n\n' +
+                        'The crash report contains a copy of the email(s) that resulted in parsing errors in the script. These emails may contain identifying information such as your username and email address. Error tracing information included with the report may also include a list of other Wayfarer userscripts you may be using.\n\n' +
+                        'All data is sent directly to a server under the developer\'s control, and will be treated confidentially. Crash reports may be archived for future testing.\n\n' +
+                        'Under the terms of the GDPR, you are entitled to a copy of your stored data, as well as deletion of said data, upon request. GDPR inquiries should be directed by email to post(at)varden(dot)info.\n\n' +
+                        'Do you wish to continue?\n\n'
+                    )) {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('POST', 'https://api.varden.info/wft/nsh/submit-crash.php', true);
+                        xhr.setRequestHeader('Content-Type', 'application/json');
+                        xhr.onload = () => alert(xhr.response);
+                        xhr.send(JSON.stringify(errors));
+                    } else {
+                        alert('Crash report has been discarded, and no data was submitted.');
                     }
                 });
-            } else if (fh['content-transfer-encoding'].toLowerCase() == 'quoted-printable' && ct.type == 'text/html') {
-                // HTML message
-                htmlBody = mimeBody;
-                charset = (ct.params.charset || 'utf-8').toLowerCase();
+                anchorp.appendChild(aReport);
+                anchorp.appendChild(document.createTextNode(' - '));
+                const aDismiss = document.createElement('a');
+                aDismiss.textContent = 'No thanks';
+                anchorp.appendChild(aDismiss);
+                anchorp.appendChild(document.createTextNode(' - '));
+                const aNever = document.createElement('a');
+                aNever.textContent = 'Don\'t ask again';
+                aNever.addEventListener('click', () => {
+                    localStorage.wfnshStopAskingAboutCrashReports = '1';
+                    errorReportingPrompt = false;
+                });
+                anchorp.appendChild(aNever);
+                createNotification(
+                    `Errors occurred during processing of some Wayfarer emails by Nomination Status History. Do you wish to report these errors to the script developer?`,
+                    'red'
+                ).appendChild(anchorp);
+            }
+            localStorage.wfnshV1ProcessedEmailStates = JSON.stringify({ version: eV1ProcessingStateVersion, states: this.#messageStatus });
+            this.#db = null;
+            this.#statusHistory = null;
+            this.#errors = null;
+            this.#stats = null;
+            this.#messageStatus = null;
+        }
+
+        async importEmail(email) {
+            // Already processed
+            if (email.messageID in this.#messageStatus) return;
+
+            let { status, reason, change, id, error } = this.#processEmail(email);
+            this.#messageStatus[email.messageID] = status;
+            if (status == this.#eProcessingStatus.SUCCESS && change && id) {
+                const merged = this.#mergeEmailChange(id, change);
+                if (merged) await this.#importChangeIntoDatabase(id, merged);
+                else status = this.#eProcessingStatus.UNCHANGED;
+            }
+            if (status == this.#eProcessingStatus.UNSUPPORTED || status == this.#eProcessingStatus.FAILURE) {
+                const err = {
+                    email: email.createDebugBundle(),
+                    error: JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error)))
+                };
+                if (error.stack) err.stack = error.stack.split('\n').filter(n => n.length);
+                this.#errors.push(err);
+            }
+            this.#stats[status]++;
+        }
+
+        #importChangeIntoDatabase(id, change) {
+            return new Promise((resolve, reject) => {
+                const tx = this.#db.transaction([OBJECT_STORE_NAME], "readwrite");
+                const start = Date.now();
+                const objectStore = tx.objectStore(OBJECT_STORE_NAME);
+                const getStored = objectStore.get(id);
+                getStored.onsuccess = () => {
+                    const { result } = getStored;
+                    if (result) {
+                        // Nomination ALREADY EXISTS in IDB
+                        const update = { ...result, statusHistory: change.updates };
+                        objectStore.put(update);
+                    }
+                    tx.commit();
+                    resolve();
+                };
+            });
+        }
+
+        #deduplicateHistoryArray(arr) {
+            for (let i = arr.length - 2; i >= 0; i--) {
+                if (arr[i].status == arr[i + 1].status) {
+                    // Duplicate status
+                    const curDate = new Date(arr[i].timestamp);
+                    if (!(curDate.getUTCMilliseconds() || curDate.getUTCSeconds() || curDate.getUTCMinutes() || curDate.getUTCHours())) {
+                        // All of the above are 0 means this was with extreme likelihood a WFES import that is less accurate.
+                        // Thus we keep the email date instead for this one even though it happened "in the future".
+                        arr.splice(i, 1);
+                    } else {
+                        arr.splice(i + 1, 1);
+                    }
+                }
+            }
+        }
+
+        #mergeEmailChange(id, change) {
+            const joined = [...change.updates, ...this.#statusHistory[id]];
+            joined.sort((a, b) => a.timestamp - b.timestamp);
+            this.#deduplicateHistoryArray(joined);
+            // It should not be possible for the stored history to have duplicates, but this line of code exists because it did somehow happen to someone
+            this.#deduplicateHistoryArray(this.#statusHistory[id]);
+            const diffs = [];
+            if (this.#statusHistory[id].length) {
+                for (let i = 0, j = 0; i < this.#statusHistory[id].length && j < joined.length; i++, j++) {
+                    while (this.#statusHistory[id][i].status !== joined[j].status) diffs.push({ ...joined[j++], previously: null });
+                    if (
+                        this.#statusHistory[id][i].timestamp !== joined[j].timestamp
+                        || !!this.#statusHistory[id][i].verified !== !!joined[j].verified
+                        || this.#statusHistory[id][i].email !== joined[j].email
+                    ) diffs.push({ ...joined[j], previously: this.#statusHistory[id][i].timestamp });
+                }
             } else {
-                parseFailures.push({
-                    id: file.id,
-                    file: file.name,
-                    subject: fh.subject,
-                    date: fh.date,
-                    reason: `Unsupported Content-Transfer-Encoding (${fh['content-transfer-encoding']}) and/or Content-Type (${fh['content-type']}).`
-                });
-                continue;
+                for (let j = 0; j < joined.length; j++) {
+                    diffs.push({ ...joined[j++], previously: null });
+                }
             }
+            if (diffs.length) return { ...change, updates: joined, diffs };
+            return null;
+        };
 
+        #processEmail(email) {
+            let change = null;
+            let id = null;
+            let returnStatus = this.#eProcessingStatus.SUCCESS;
+            let reason = null;
+            let except = null
             try {
-                // Unfold QP CTE
-                const body = htmlBody
-                .split(/=\r?\n/).join('')
-                .split(/\r?\n/).map(e => {
-                    const uriStr = e.split('%').join('=25').split('=').join('%');
-                    switch (charset) {
-                        case 'utf-8':
-                            return decodeURIComponent(uriStr);
-                        case 'iso-8859-1':
-                        case 'us-ascii':
-                        case 'windows-1252':
-                            return decodeURIComponent(asciiToUTF8(uriStr));
-                        default:
-                            throw new Error(`Unknown charset ${charset}.`);
+                const emlClass = email.classify();
+                if (!['NOMINATION_RECEIVED', 'NOMINATION_DECIDED', 'APPEAL_RECEIVED', 'APPEAL_DECIDED'].includes(emlClass.type) || ['LIGHTSHIP'].includes(emlClass.style)) {
+                    returnStatus = this.#eProcessingStatus.SKIPPED;
+                    reason = 'This email is either for a type of contribution that is not trackable in Niantic Wayfarer, or for content that is unrelated to Wayfarer.';
+                } else {
+                    const doc = email.getDocument();
+                    let success = false;
+                    let template = null;
+                    if (emlClass.style == 'WAYFARER' && emlClass.type == 'NOMINATION_RECEIVED') {
+                        template = {
+                            status: [() => this.#eType.NOMINATED],
+                            image: [this.#eQuery.IMAGE_ALT('Submission Photo')]
+                        };
+                    } else if (emlClass.style == 'WAYFARER' && emlClass.type == 'APPEAL_RECEIVED') {
+                        template = {
+                            status: [() => this.#eType.APPEALED],
+                            image: [this.#eQuery.IMAGE_ALT('Submission Photo')]
+                        };
+                    } else {
+                        const subject = email.getHeader('Subject');
+                        for (let j = 0; j < this.#emailParsers.length; j++) {
+                            if (subject.match(this.#emailParsers[j].subject)) {
+                                template = this.#emailParsers[j];
+                                break;
+                            }
+                        }
                     }
-                }).join('\n');
-
-                const doc = dp.parseFromString(body, 'text/html');
-                /* DEBUG */
-                //console.log(doc);
-                /* DEBUG */
-                let success = false;
-                let ignore = false;
-                for (let j = 0; j < emailParsers.length; j++) {
-                    if (!fh.subject.match(emailParsers[j].subject)) continue;
-                    if (emailParsers[j].ignore) {
-                        skippedEmails.push({
-                            id: file.id,
-                            file: file.name,
-                            subject: fh.subject,
-                            date: fh.date,
-                            reason: `This email is either for a type of contribution that is not trackable in Niantic Wayfarer, or for content that is unrelated to Wayfarer.`
-                        });
-                        ignore = true;
-                        break;
+                    if (!template) {
+                        throw new UnknownTemplateError('This email does not appear to match any styles of Niantic emails currently known to Nomination Status History.');
                     }
                     let url = null;
-                    if (emailParsers[j].image) {
-                        for (let k = 0; k < emailParsers[j].image.length && url === null; k++) {
-                            url = emailParsers[j].image[k](doc, fh);
+                    if (template.image) {
+                        for (let k = 0; k < template.image.length && url === null; k++) {
+                            url = template.image[k](doc, email);
                             if (url) {
                                 const match = url.match(/^https?:\/\/lh3.googleusercontent.com\/(.*)$/);
                                 if (!match) url = null;
@@ -2132,289 +1715,63 @@
                             };
                         }
                     }
-                    if (!url) throw new Error('Could not determine which nomination this email references.');
-                    const [ nom ] = nominations.filter(e => e.imageUrl.endsWith('/' + url));
-                    if (!nom) throw new Error('The nomination that this email refers to cannot be found on this Wayfarer account.');
-                    const status = emailParsers[j].status(doc, nom, fh);
-                    if (!status) throw new Error('Unable to determine the status change that this email represents.');
-                    if (!parsedChanges.hasOwnProperty(nom.id)) {
-                        parsedChanges[nom.id] = {
-                            title: nom.title,
-                            updates: []
-                        }
+
+                    if (!url) throw new MissingDataError('Could not determine which nomination this email references.');
+                    const [nom] = this.#submissions.filter(e => e.imageUrl.endsWith('/' + url));
+                    if (!nom) throw new NominationMatchingError(`The nomination that this email refers to cannot be found on this Wayfarer account (failed to match LH3 URL ${url}).`);
+                    let status = null;
+                    for (let k = 0; k < template.status.length && status === null; k++) {
+                        status = template.status[k](doc, nom, email);
                     }
-                    if (file.id) parsedIDs.push(file.id);
-                    parsedChanges[nom.id].updates.push({
-                        timestamp: new Date(fh.date).getTime(),
-                        verified: true,
-                        status
-                    });
+                    if (!status) throw new MissingDataError('Unable to determine the status change that this email represents.');
+                    change = {
+                        title: nom.title,
+                        updates: [{
+                            timestamp: new Date(email.getHeader('Date')).getTime(),
+                            verified: true,
+                            email: email.messageID,
+                            status
+                        }]
+                    };
+                    id = nom.id;
                     success = true;
+                    if (!success && returnStatus !== this.#eProcessingStatus.SKIPPED) throw new UnknownTemplateError('This email does not appear to match any styles of Niantic emails currently known to Nomination Status History.');
                 }
-                if (!success && !ignore) throw new Error('This email does not appear to match any styles of Niantic emails currently known to Nomination Status History.');
             } catch (e) {
-                console.log(e);
-                parseFailures.push({
-                    id: file.id,
-                    file: file.name,
-                    subject: fh.subject,
-                    date: new Date(fh.date),
-                    reason: e.message,
-                });
+                except = e;
+                if (e instanceof UnresolvableProcessingError) {
+                    console.warn(e);
+                    returnStatus = this.#eProcessingStatus.AMBIGUOUS;
+                } else if (e instanceof EmailParsingError) {
+                    console.error(e, email);
+                    returnStatus = this.#eProcessingStatus.UNSUPPORTED;
+                } else {
+                    console.error(e, email);
+                    returnStatus = this.#eProcessingStatus.FAILURE;
+                }
+                reason = e.message;
+            }
+            return { status: returnStatus, reason, change, id, error: except };
+        }
+
+        #tryNull(call) {
+            try {
+                return call() || null;
+            } catch (e) {
+                return null;
             }
         }
 
-        Object.keys(parsedChanges).forEach(k => parsedChanges[k].updates.sort((a, b) => a.timestamp - b.timestamp));
-        resolve({ parsedChanges, parseFailures, skippedEmails, parsedIDs });
-    });
+        #utcDateToISO8601(date) {
+            return `${date.getUTCFullYear()}-${('0' + (date.getUTCMonth() + 1)).slice(-2)}-${('0' + date.getUTCDate()).slice(-2)}`;
+        }
 
-    const parseMIME = data => {
-        const bound = data.indexOf('\r\n\r\n');
-        if (bound < 0) return null;
-        const headers = data.substr(0, bound)
-            .replaceAll(/\r\n\s/g, ' ')
-            .split(/\r\n/).map(e => {
-                const b = e.indexOf(':');
-                const token = e.substr(0, b);
-                // Decode RFC 2047 atoms
-                const field = e.substr(b + 1).trim().replaceAll(/=\?([A-Za-z0-9-]+)\?([QqBb])\?([^\?]+)\?=(?:\s+(?==\?[A-Za-z0-9-]+\?[QqBb]\?[^\?]+\?=))?/g, (_, charset, encoding, text) => {
-                    if (!['utf-8', 'us-ascii', 'iso-8859-1', 'windows-1252'].includes(charset.toLowerCase())) throw new Error(`Unknown charset "${charset}".`);
-                    switch (encoding) {
-                        case 'Q': case 'q':
-                            text = text.split('_').join(' ').split('%').join('=25').split('=').join('%');
-                            return decodeURIComponent(charset.toLowerCase() == 'utf-8' ? text : asciiToUTF8(text))
-                        case 'B': case 'b': return charset.toLowerCase() == 'utf-8' ? atobUTF8(text) : atob(text);
-                        default: throw new Error(`Invalid RFC 2047 encoding format "${encoding}".`);
-                    }
-                });
-                return [ token, field.trim() ];
-            });
-        const body = data.substr(bound + 4);
-        return [ headers, body ];
-    };
-
-    const parseContentType = ctHeader => {
-        const m = ctHeader.match(/^(?<type>[^\/]+\/[^\/;\s]+)(?=($|(?<params>(;[^;]*)*)))/);
-        const { type, params } = m.groups;
-        const paramMap = {};
-        if (params) params.substr(1).split(';').forEach(param => {
-            const [ attr, value ] = param.trim().split('=');
-            paramMap[attr.toLowerCase()] = value.startsWith('"') && value.endsWith('"') ? value.substring(1, value.length - 1) : value;
-        });
-        return { type: type.toLowerCase(), params: paramMap };
-    };
-
-    const extractEmail = fromHeader => {
-        const sb = fromHeader.lastIndexOf('<');
-        const eb = fromHeader.lastIndexOf('>');
-        if (sb < 0 && eb < 0) return fromHeader;
-        else return fromHeader.substr(sb + 1, eb - sb - 1);
+        #shiftDays(date, offset) {
+            const nd = new Date(date);
+            nd.setUTCDate(nd.getUTCDate() + offset);
+            return nd;
+        }
     }
-
-    // https://stackoverflow.com/a/30106551/1955334
-    const atobUTF8 = text => decodeURIComponent(atob(text).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
-
-    const asciiToUTF8 = text => text.replaceAll(/%([A-Fa-f][0-9A-Fa-f])/g, (match, p1) => {
-        const ci = parseInt(p1, 16);
-        if (ci <= 0xBF) return '%c2%' + ci.toString(16);
-        if (ci >= 0xC0) return '%c3%' + (ci - 0x40).toString(16);
-    });
-
-    const utcDateToISO8601 = date => `${date.getUTCFullYear()}-${('0' + (date.getUTCMonth() + 1)).slice(-2)}-${('0' + date.getUTCDate()).slice(-2)}`;
-    const shiftDays = (date, offset) => {
-        const nd = new Date(date);
-        nd.setUTCDate(nd.getUTCDate() + offset);
-        return nd;
-    }
-
-    const userManualGAS =
-`<!DOCTYPE html>
-<html>
-<head>
-<title>GAS Setup Guide</title>
-<style>
-* {
-font-family: sans-serif;
-}
-code, textarea {
-font-family: monospace;
-}
-img {
-box-shadow: 0 0 10px black;
-}
-body {
-background: #ccc;
-}
-#content {
-max-width: 800px;
-margin: auto;
-padding: 0 30px 30px 30px;
-border: 1px solid black;
-background: #fff;
-}
-img {
-max-width: 100%;
-}
-textarea {
-width: 100%;
-height: 100px;
-}
-</style>
-</head>
-<body><div id="content">
-<h1>Nomination Status History: GAS Setup Guide</h1>
-<p>This user manual will explain how to set up semi-automatic email imports from Gmail using Google Apps Script. If you have previously set up the Wayfarer Planner addon, the steps are similar.</p>
-<p>Note: The layout of the Google Apps Script website is subject to change. Please reach out to the developer of the script if you are unsure how to proceed with the setup, or if the guide below is no longer accurate.</p>
-<h2>Step 1: Create a Google Apps Script project</h2>
-<p><a href="https://script.google.com/home" target="_blank">Click here</a> to open Google Apps Script. Sign in to your Google account, if you aren't already.</p>
-<p>Click on the "New Project" button in the top left corner:</p>
-<img src="https://i.imgur.com/a8CicNr.png">
-<p>The new project will look like this:</p>
-<img src="https://i.imgur.com/98mlmxj.png">
-<p>Click on "Untitled project" at the top, and give it a name so that you can easily recognize it later. I suggest "Wayfarer Email Importer".</p>
-<hr>
-<h2>Step 2: Copy and paste the importer code</h2>
-<p>Copy the current Importer Script source code below:</p>
-<textarea readonly>function setup() {
-  const props = PropertiesService.getScriptProperties();
-  if (!props.getProperty("accessToken")) props.setProperty("accessToken", randomBase64(128));
-  console.log(
-    "Script configured!\\n\\nTHIS IS YOUR ACCESS TOKEN:\\n"
-    + props.getProperty("accessToken")
-    + "\\n\\nKeep it secret, and never share it with anyone else.");
-}
-
-function resetScriptData() {
-  const props = PropertiesService.getScriptProperties();
-  props.deleteAllProperties();
-  console.log("Script data successfully reset. Please remember to regenerate an access token by running setup.");
-}
-
-function randomBase64(length) {
-  let result = '';
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const charactersLength = characters.length;
-  let counter = 0;
-  while (counter &lt; length) {
-    result += characters.charAt(Math.floor(Math.random() * charactersLength));
-    counter += 1;
-  }
-  return result;
-}
-
-function doPost(e) {
-  const req = JSON.parse(e.postData.contents);
-  const props = PropertiesService.getScriptProperties();
-  const token = props.getProperty("accessToken");
-  const output = { version: 1 };
-
-  if (!token || req.token !== token) {
-    output.status = "ERROR";
-    output.result = "unauthorized";
-  } else {
-    let callback = null;
-    switch (req.request) {
-      case "list": callback = findEmails; break;
-      case "fetch": callback = getEmails; break;
-      case "test": callback = validate; break;
-    }
-    if (callback) {
-      output.status = "OK";
-      output.result = callback(req.options);
-    } else {
-      output.status = "ERROR";
-      output.result = "unknown_route";
-    }
-  }
-  var contentSvc = ContentService.createTextOutput(JSON.stringify(output));
-  contentSvc.setMimeType(ContentService.MimeType.JSON);
-  return contentSvc;
-}
-
-function findEmails({ since, offset, size }) {
-  const senders = [
-    "hello@pokemongolive.com",
-    "nominations@portals.ingress.com",
-    "notices@wayfarer.nianticlabs.com",
-    "ingress-support@nianticlabs.com",
-    "ingress-support@google.com"
-  ].map(e => "from:" + e);
-  if (since == "") since = "1970-01-01";
-  if (!since.match(/^\\d{4}-\\d{2}-\\d{2}$/)) return [];
-  const emails = [];
-  const threads = GmailApp.search("(" + senders.join(" | ") + ") after:" + since, offset, size);
-  for (j = 0; j &lt; threads.length; j++) emails.push(threads[j].getId());
-  return emails;
-}
-
-function getEmails({ ids }) {
-  const emls = {};
-  for (let i = 0; i &lt; ids.length; i++) {
-    emls[ids[i]] = GmailApp.getThreadById(ids[i]).getMessages()[0].getRawContent();
-  }
-  return emls;
-}
-
-function validate() {
-  return "success";
-}</textarea>
-<p>The Google Apps Script page has a large text area that currently contains <code>function myFunction()</code> and some brackets. Select all of this text, delete it, and press <code>Ctrl+V</code> to replace it with the code you just copied above.</p>
-<p>Then save the file by pressing <code>Ctrl+S</code>.</p>
-<hr>
-<h2>Step 3: Limit the script's permissions</h2>
-<p>By default, the script you have pasted will try to get full read and write access to your Gmail account. This level of permission is not necessary, and for the safety of your account, it is recommended that you limit the permissions of the script so that it cannot write or delete emails. This step is <u>optional</u>, but it is <u>highly recommended</u>.</p>
-<p>Click on the cog wheel icon (1) to access project settings, then ensure that "Show appsscript.json manifest file" is <u>checked</u>, like in this picture:</p>
-<img src="https://i.imgur.com/Q7h200M.png">
-<p>Next, return to the script editor by pressing the "Editor" button (1), and click on the new "appsscript.json" file that appears in the file list (2):</p>
-<img src="https://i.imgur.com/eB5hred.png">
-<p>Copy the correct manifest contents from below:</p>
-<textarea readonly>{
-  "timeZone": "Etc/UTC",
-  "dependencies": {},
-  "exceptionLogging": "STACKDRIVER",
-  "runtimeVersion": "V8",
-  "oauthScopes": [
-    "https://www.googleapis.com/auth/gmail.readonly"
-  ]
-}</textarea>
-<p>Then, overwrite the contents of the file by deleting all the contents, then pressing <code>Ctrl+V</code> to paste the contents you just copied. Save the file using <code>Ctrl+S</code>.</p>
-<hr>
-<h2>Step 4: Authorizing the script to access emails</h2>
-<p>Return to the "Code.gs" file (1). In the function dropdown, ensure "setup" is selected (2), then press "Run" (3):</p>
-<img src="https://i.imgur.com/VFx9Wgs.png">
-<p>You will see an authorization prompt, like the screenshot below. Click on "Review permissions" when it appears.</p>
-<img src="https://i.imgur.com/sReSttx.png">
-<p>A popup will appear. Click on "Advanced" (1), then "Go to Wayfarer Email Importer (unsafe)" (or the name of your script) (2). This warning screen shows because the script used by Nomination Status History has not been verified by Google. It is completely safe to use - the source code of the script is what you just pasted earlier.</p>
-<img src="https://i.imgur.com/3wSTjPy.png">
-<p>The following screen will then appear, asking permission to view your emails. Click on Allow.</p>
-<img src="https://i.imgur.com/QHiZLc4.png">
-<hr>
-<h2>Step 5: Copy the access token</h2>
-<p>You will be returned to the main Apps Script window, where a new "Execution log" will appear. After a few seconds, an access token will appear in this pane.</p>
-<img src="https://i.imgur.com/WUAMGLR.png">
-<p>Copy this value, and paste it in the "Access token" box that you are asked for on the "Import using Google Apps Script" window on Wayfarer.</p>
-<p><b>It is very important that you do not share this token with <u>anyone</u>. Keep it completely secret.</b></p>
-<p>P.S. The input box for the access token will hide its contents to prevent accidental leakage through screenshots. If you ever need it again, for example on another device, you can return to the Google Apps Script and click "Run" using the "setup" function again. If your token is ever accidentally disclosed, you can reset it by running the "resetScriptData" function, and the "setup" again to generate a new token.</p>
-<hr>
-<h2>Step 6: Deploy the script</h2>
-<p>In the top right corner of the Google Apps Script page, there is a blue "Deploy" button. Click on it, and then click "New deployment".</p>
-<img src="https://i.imgur.com/WNiIMwf.png">
-<p>In the window that appears, click the gear icon, then select "Web app".</p>
-<img src="https://i.imgur.com/tmvBq3E.png">
-<p>Some settings will appear. Leave "Execute as" set to "Me", but make sure that "Who has access" is set to "Anyone" (1). Then, click "Deploy" (2).</p>
-<img src="https://i.imgur.com/a8LPFaM.png">
-<p>When the deployment has completed, you will be shown a web app URL. Copy this URL, and paste it into the "Script URL" box in the "Import using Google Apps Script" window on Wayfarer.</p>
-<img src="https://i.imgur.com/2ydKg9H.png">
-<hr>
-<h2>Step 7: First import</h2>
-<p>Congratulations, the setup is now complete! Here are a few things to keep in mind that specifically apply to the <u>first time</u> you use the importer:</p>
-<ul>
-<li>The first time you import emails, the process can take a very long time, as it has to import all of your emails. This can take many minutes.</li>
-<li>If you have previously and recently used the manual *.eml file importer function, you may not have any changes detected. It is very important that even if you have no changes detected, you click on "Import 0 change(s)" this time, because this will mark all the emails you just imported as processed, so that it does not have to process every single one of them again the next time you run the importer.</li>
-</ul>
-</div></body>
-</html>
-`;
 
     (() => {
         const css = `
@@ -2435,14 +1792,26 @@ function validate() {
             .wfnshBg-red {
                 background-color: #CC0000;
             }
+            .wfnshBg-red a {
+                color: #FCC;
+            }
             .wfnshBg-green {
                 background-color: #09b065;
             }
             .wfnshBg-blue {
                 background-color: #1a3aad;
             }
+            .wfnshBg-purple {
+                background-color: #8b5cf6;
+            }
             .wfnshBg-gold {
                 background-color: goldenrod;
+            }
+            .wfnshBg-gray {
+                background-color: gray;
+            }
+            .wfnshBg-brown {
+                background-color: #755534;
             }
             .wfnshDropdown {
                 cursor: pointer;
