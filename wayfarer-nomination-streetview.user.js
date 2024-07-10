@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Nomination Streetview
-// @version      0.4.1
+// @version      0.4.2
 // @description  Add Streetview to selected nomination
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-streetview.user.js
@@ -82,7 +82,7 @@
     function handleNominationClick(e) {
         awaitElement(() => e.target.closest('app-submissions-list-item'))
             .then((ref) => {
-                const img = ref.querySelector('img').src;
+                const img = ref.querySelector(".object-cover").src;
                 let nom = null;
                 for (const nomination of nomCache.submissions) {
                     if (nomination.imageUrl === img || (nomination.poiData && nomination.poiData.imageUrl === img)) {
@@ -120,20 +120,17 @@
 
         awaitElement(() => document.querySelector("app-submissions app-details-pane h4"))
             .then((titleP) => {
-                if (intelLink === null) {
-                intelLink = document.createElement('a');
-                intelLink.id = 'intelLink';
-                intelLink.className = 'anchor-link';
-                intelLink.target = "_blank";
-                intelLink.title = 'Open in Intel';
-                intelLink.style['font-size'] = "1.25rem";
-            }
-
-            intelLink.href = `https://intel.ingress.com/?ll=${lat},${lng}&z=16`;
-            intelLink.innerText = titleP.innerText;
-            
-            insertAfter(intelLink, titleP);
-            titleP.style.display = "none";
+                let titleText = selected.title;
+                if (titleText.length == 0) {
+                    if (selected.hasOwnProperty('poiData')) {
+                        titleText = selected.poiData.title;
+                    }
+                }
+                titleP.style.cursor = 'pointer';
+                titleP.title = 'Copy coordinates to clipboard';
+                titleP.onclick = function() {
+                    navigator.clipboard.writeText(titleText);
+                }
         });     
 	}
 
