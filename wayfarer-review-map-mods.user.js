@@ -3,7 +3,6 @@
 // @version      0.9.1
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-map-mods.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.nianticlabs.com/*
 // @run-at       document-start
@@ -665,12 +664,12 @@ function init() {
                 }
 
                 // now clear out all old storage items for this plugin
-                Object.keys(localStorage)
+/* don't do this!                Object.keys(localStorage)
                  .filter(x => x.startsWith('wfmm_') && !x.includes(userId))
                  .forEach(x => {
                     console.log(`wfmm removing old storage key: ${x}`);
                     localStorage.removeItem(x)
-                });
+                }); */
 
                 localStorage["wfmm_data_migrated_" + userId] = "true";
             })
