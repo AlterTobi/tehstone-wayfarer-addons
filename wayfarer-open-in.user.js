@@ -141,7 +141,7 @@
         {
             // Germany (Schleswig-Holstein)
             label: 'DigitalAtlasNord',
-            url: 'https://danord.gdi-sh.de/viewer/resources/apps/Anonym/index.html?lang=de&c=%lng%%2C%lat%&vm=2D&s=3000&r=0&#/',
+            url: 'https://danord.gdi-sh.de/viewer/resources/apps/Anonym/index.html?lang=de&c=%lng%%2C%lat%&vm=2D&s=1500&bm=DOP20&r=0&#/',
             projection: 'EPSG:25832',
             regions: ['DE_HB', 'DE_HH', 'DE_SH']
         },
