@@ -139,6 +139,13 @@
             regions: ['DE_HB']
         },
         {
+            // Germany (Schleswig-Holstein)
+            label: 'DigitalAtlasNord',
+            url: 'https://danord.gdi-sh.de/viewer/resources/apps/Anonym/index.html?lang=de&c=%lng%%2C%lat%&vm=2D&s=3000&r=0&#/',
+            projection: 'EPSG:25832',
+            regions: ['DE_HB', 'DE_HH', 'DE_SH']
+        },
+        {
             // Germany (Bremen, Hamburg, Schleswig-Holstein)
             label: 'Hamburg Geo-Online',
             url: 'https://geoportal-hamburg.de/geo-online/?Map/layerIds=12883,12884,16101,19968,94&visibility=true,true,true,true,true&transparency=0,0,0,0,0&Map/center=[%lng%,%lat%]&Map/zoomLevel=9',
