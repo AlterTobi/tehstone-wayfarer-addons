@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Keyboard Review
-// @version      2.1.0
+// @version      2.1.2
 // @description  Add keyboard review to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-keyboard-review.user.js
@@ -594,7 +594,7 @@
                         const dupKeys = {
                             'Enter': () => {
                                 if (!isDialogOpen()) {
-                                    const dupeBtn = document.querySelectorAll('#check-duplicates-card .agm-info-window-content button.wf-button--primary');
+                                    document.querySelectorAll('#check-duplicates-card .agm-info-window-content button.wf-button--primary');
                                     for (let i = 0; i < dupeBtn.length; i++) {
                                         if (dupeBtn[i] && dupeBtn[i].closest('body')) {
                                             dupeBtn[i].click();
@@ -729,10 +729,20 @@
 
     const handleEnterNew = () => {
         let btn = null;
+        console.log("handleEnterNew");
         if (isDialogOpen() && !isDialogClosing()) {
-            btn = document.querySelector('mat-dialog-container .mat-dialog-actions button.wf-button--primary');
+            btn = document.getElementById('wayfarerrtssbutton_r');
+            if (!btn) {
+                btn = document.getElementById('wayfarerrtssbutton_d');
+            }
+            if (!btn) {
+                btn = document.querySelector('mat-dialog-container .mat-dialog-actions button.wf-button--primary');
+            }
         } else {
-            btn = document.querySelector('app-submit-review-split-button button.wf-button--primary');
+            btn = document.getElementById('wayfarerrtssbutton_0');
+            if (!btn) {
+                btn = document.querySelector('app-submit-review-split-button button.wf-button--primary');
+            }
         }
         if (btn) {
             btn.click();
@@ -988,13 +998,13 @@
         const edsKeys = keyList.map(key => `.wfkr2-eds-key-bracket-${key}::before { content: '[${key}]'; }`).join('\n');
 
         const css = `
-	    .wfkr2-eds-highlighted {
+        .wfkr2-eds-highlighted {
             border-width: 1px;
-		    border-color: #df471c;
-	    }
-	    .dark .wfkr2-eds-highlighted {
-		    border-color: #20B8E3;
-	    }
+            border-color: #df471c;
+        }
+        .dark .wfkr2-eds-highlighted {
+            border-color: #20B8E3;
+        }
         .wfkr2-eds-btn-key::before, .wfkr2-key-label, .wfkr2-key-span {
             color: #FF6D38;
             font-family: monospace;

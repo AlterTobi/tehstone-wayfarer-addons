@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Timer
-// @version      0.6.0
+// @version      0.6.5
 // @description  Add review timer to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-review-timer.user.js
@@ -33,10 +33,7 @@
     let tryNumber = 10;
     let expireTime = null;
     let userId = null;
-    let submitPopup = null;
-    let checkTimer = null;
-    let rejectCheckTimer = null;
-    let dupeModalCheckTimer = null;
+    let rejectModalCheckTimer = null;
     let submitButtonClicked = false;
 
     /**
@@ -102,7 +99,7 @@
                     counter = document.createElement('p');
                     counter.id = "wayfarerrtmr_counter"
                     counter.classList.add("wftmr_counter");
-                    
+
                     div.appendChild(countLabel);
                     div.appendChild(counter);
                     container.appendChild(div);
@@ -258,7 +255,7 @@
             smartSubmitEnabled = false;
         } else {
             smartSubmitEnabled = smartSubmitEnabled === "true";
-        }        
+        }
 
         for(let i=0; i < buttons.length; i++) {
             let smartSubmitButton = document.getElementById(`wayfarerrtssbutton_${i}`);
@@ -272,7 +269,7 @@
 
             if (smartSubmitButton === null) {
                 smartSubmitButton = document.createElement("button");
-                smartSubmitButton.className = 'wf-button wf-split-button__main wf-button--disabled wfrt-smart-button';
+                smartSubmitButton.className = 'wf-button wf-split-button__main wfrt-smart-button';
                 smartSubmitButton.disabled = true;
                 smartSubmitButton.id = `wayfarerrtssbutton_${i}`;
                 smartSubmitButton.innerHTML = "Smart Submit";
@@ -287,45 +284,50 @@
 
 
         addSubmitButtonObserver();
+        addRejectModalCheck();
+    }
 
-        dupeModalCheckTimer = setInterval(() => {
-            const dupeModal = document.getElementsByTagName("app-confirm-duplicate-modal");
-            if (dupeModal.length < 1) {
+    function addRejectModalCheck() {
+        rejectModalCheckTimer = setInterval(() => {
+            const rejectModal = document.querySelector('[id^=mat-dialog]');
+            if (!rejectModal || rejectModal.childElementCount < 1) {
                 return;
             }
+
+            let buttonId;
+            if (rejectModal.childNodes[0].tagName ==  "APP-CONFIRM-DUPLICATE-MODAL"){
+                buttonId = "wayfarerrtssbutton_d";
+            } else {
+                buttonId = "wayfarerrtssbutton_r";
+            }
             const parent = document.getElementsByClassName("mat-dialog-actions");
-            let smartSubmitButton = document.getElementById(`wayfarerrtssbutton_d`);
+            let selectionRequired = false;
+            let selectionRequiredTags = ["APP-APPROPRIATE-REJECTION-FLOW-MODAL", "APP-ACCURACY-REJECTION-FLOW-MODAL"];
+            //let other = ["APP-LOCATION-PERMANENT-REJECTION-FLOW-MODAL", "APP-SAFE-REJECTION-FLOW-MODAL" ];
+            if (selectionRequiredTags.includes(rejectModal.childNodes[0].tagName)) {
+                selectionRequired = true;
+            }
+            let smartSubmitButton = document.getElementById(buttonId);
             if (smartSubmitButton === null) {
                 const buttons = parent[0].getElementsByTagName('button');
                 smartSubmitButton = document.createElement("button");
-                smartSubmitButton.className = 'wf-button wf-split-button__main wf-button--disabled wfrt-smart-button';
+                smartSubmitButton.className = 'wf-button wf-split-button__main wf-button--primary wfrt-smart-button';
                 smartSubmitButton.style.marginLeft = "1.5rem";
-                smartSubmitButton.id = `wayfarerrtssbutton_d`;
+                smartSubmitButton.id = buttonId;
                 smartSubmitButton.innerHTML = "Smart Submit";
                 smartSubmitButton.onclick = function() {
-                    checkSubmitReview();
+                    checkSubmitReview(true);
                 }
                 insertAfter(smartSubmitButton, buttons[1]);
 
                 buttons[1].style.display = "none";
-            }
+                if (selectionRequired) {
+                    addModalSubmitButtonObserver(buttonId, buttons[1]);
+                }
+            }            
 
             clearInterval(this);
         }, 500);
-
-        let thumbElements = document.querySelectorAll('*[class^="mat-icon"]');
-        let found = 0;
-        for (var i = 0; i < thumbElements.length; i++) { 
-            if (thumbElements[i].innerHTML.startsWith('thumb_down')) {
-                found++;
-                thumbElements[i].onclick = function() {
-                    setTimeout(addButtonToRejectDialog, 500);
-                };
-            }
-            if (found == 4) {
-                break;
-            }
-        }
     }
 
     function addSubmitButtonObserver() {
@@ -336,14 +338,13 @@
         }
 
         const button = buttonWrapper[0].querySelector('button.wf-button--primary');
+
         const observer = new MutationObserver(function(mutations) {
             mutations.forEach(function(mutation) {
                 if (mutation.type == 'attributes' && mutation.attributeName == 'disabled') {
                     for(let i=0; i < buttonWrapper.length;i++) {
                         let smartButton = document.getElementById(`wayfarerrtssbutton_${i}`);
-                        smartButton.disabled = button.disabled;
-                        smartButton.classList.toggle('wf-button--disabled', button.disabled);
-                        smartButton.classList.toggle('wf-button--primary', !button.disabled);
+                        toggleButtonClasses(smartButton, button)
                     }
                 }
             });
@@ -355,53 +356,18 @@
         });
     }
 
-    function addButtonToRejectDialog() {
-        const parent = document.getElementsByClassName("mat-dialog-container");
-        if (parent.length < 1) {
-            return;
-        }
-        let selectionRequired = false;
-        if (parent[0].childNodes[0].localName !== "app-safe-rejection-flow-modal"
-            && parent[0].childNodes[0].localName !== "app-location-permanent-rejection-flow-modal") {
-            selectionRequired = true;
-        }
-        const buttons = parent[0].getElementsByTagName('button');
-        let smartSubmitButton = document.getElementById(`wayfarerrtssbutton_r`);
-        if (smartSubmitButton === null) {
-            smartSubmitButton = document.createElement("button");
-            if (selectionRequired) {
-                smartSubmitButton.className = 'wf-button wf-split-button__main wf-button--disabled';
-                smartSubmitButton.disabled = true;
-            } else {
-                smartSubmitButton.className = 'wf-button wf-split-button__main wf-button--primary';
-                smartSubmitButton.disabled = false;
-            }
-            
-            
-            smartSubmitButton.style.marginLeft = "1.5rem";
-            smartSubmitButton.id = `wayfarerrtssbutton_r`;
-            smartSubmitButton.innerHTML = "Smart Submit";
-            smartSubmitButton.onclick = function() {
-                checkSubmitReview(true);
-            }
-            insertAfter(smartSubmitButton, buttons[1]);
-
-            buttons[1].style.display = "none";
-        }
-
-        if (selectionRequired) {
-            addRejectButtonObserver(buttons[1]);
-        }
+    function toggleButtonClasses(smartButton, button) {
+        smartButton.disabled = button.disabled;
+        smartButton.classList.toggle('wf-button--disabled', button.disabled);
+        smartButton.classList.toggle('wf-button--primary', !button.disabled);
     }
 
-    function addRejectButtonObserver(button) {
+    function addModalSubmitButtonObserver(buttonId, button) {
         const observer = new MutationObserver(function(mutations) {
             mutations.forEach(function(mutation) {
                 if (mutation.type == 'attributes' && mutation.attributeName == 'disabled') {
-                    let smartButton = document.getElementById(`wayfarerrtssbutton_r`);
-                    smartButton.disabled = button.disabled;
-                    smartButton.classList.toggle('wf-button--disabled', button.disabled);
-                    smartButton.classList.toggle('wf-button--primary', !button.disabled);
+                    let smartButton = document.getElementById(buttonId);
+                    toggleButtonClasses(smartButton, button);
                 }
             });
         });
@@ -435,11 +401,12 @@
     }
 
     function waitToSubmit(delay, rejection) {
+        let btn;
         let diff = Math.ceil((expireTime - new Date().getTime()) / 1000);
         if (diff + delay < 1200) {
             if (rejection) {
             const parent = document.getElementsByClassName("mat-dialog-container")[0];
-            btn = parent.querySelectorAll('button[class="wf-button wf-button--primary"]')[0];
+            btn = parent.querySelector("[class*='wf-button--primary'][style*='display: none;']")
         } else {
             btn = document.querySelector('button[class="wf-button wf-split-button__main wf-button--primary"]');
         }
@@ -453,8 +420,9 @@
     }
 
     function updateButtonText(message, timeRemaining){
+        let button;
         for (let i=0; i < 5; i++) {
-            let button = document.getElementById(`wayfarerrtssbutton_${i}`);
+            button = document.getElementById(`wayfarerrtssbutton_${i}`);
             if (button === null) {
                 break;
             }

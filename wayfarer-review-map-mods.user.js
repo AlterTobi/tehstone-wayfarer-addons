@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Map Mods
-// @version      0.9.1
+// @version      0.9.3
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-map-mods.user.js
@@ -132,6 +132,7 @@ function init() {
     }
 
     function checkPageType() {
+        console.log("checkPageType")
         awaitElement(() =>
                 document.getElementById('appropriate-card') ||
                 document.querySelector('app-review-edit'))
@@ -144,12 +145,14 @@ function init() {
     };
 
     function addMapMods() {
-        console.log("addMapMods");
+        //console.log("addMapMods");
         if (typeof(google) === 'undefined') {
+            console.log("addMapMods waiting for google");
             setTimeout(addMapMods, 200);
             return;
         }
         let gmap;
+        userId = getUserId();
         awaitElement(() =>
                 document.querySelector('#check-duplicates-card nia-map') ||
                 document.querySelector("app-select-location-edit"))
@@ -218,6 +221,8 @@ function init() {
                 if (isDisplayGridEnabled()) {
                     addS2Overlay(cellSize, cellColor, secondGridEnabled, cellSizeTwo, cellColorTwo);
                     addS2HighlightAtCoords(candidate['lat'], candidate['lng']);
+                    drawCloseCircle();
+                    drawMoveCircle();
                 }
                 locationChangeBtnListener();
                 locationResetChangeBtnListener();
