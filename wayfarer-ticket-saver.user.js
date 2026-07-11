@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Ticket Saver
-// @version      0.2.2
+// @version      0.2.3
 // @description  Saves interactions with Niantic Support initiated through Wayfarer.
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-ticket-saver.user.js
@@ -13,7 +13,7 @@
 // @grant        GM_addValueChangeListener
 // ==/UserScript==
 
-// Copyright 2024 tehstone, bilde
+// Copyright 2021 tehstone, bilde
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
@@ -233,6 +233,31 @@
                 searchBox.focus();
             });
             inner.appendChild(searchBtn);
+
+            const exportBtn = document.createElement('div');
+            exportBtn.textContent = '📤';
+            exportBtn.title = 'Export';
+            exportBtn.classList.add('wfSTH-close');
+            exportBtn.addEventListener('click', () => {
+                getIDBInstance().then(db => {
+                    const tx = db.transaction([OBJECT_STORE_NAME], 'readonly');
+                    tx.oncomplete = event => db.close();
+                    const objectStore = tx.objectStore(OBJECT_STORE_NAME);
+                    const getAllTickets = objectStore.getAll();
+                    getAllTickets.onsuccess = () => {
+                        const { result } = getAllTickets;
+                        const blob = new Blob([JSON.stringify(result)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const anchor = document.createElement('a');
+                        anchor.setAttribute('download', `wayfarer-ticket-saver.json`);
+                        anchor.href = url;
+                        anchor.setAttribute('target', '_blank');
+                        anchor.click();
+                        URL.revokeObjectURL(url);
+                    }
+                });
+            });
+            inner.appendChild(exportBtn);
 
             const searchCache = [];
             searchBox.placeholder = 'Search...';
