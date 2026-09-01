@@ -5,7 +5,7 @@
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-email-api.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons/
-// @match        https://wayfarer.nianticlabs.com/*
+// @match        https://wayfarer.scopely.com/*
 // @run-at       document-start
 // ==/UserScript==
 

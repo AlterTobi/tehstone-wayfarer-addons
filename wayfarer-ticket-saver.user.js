@@ -5,7 +5,7 @@
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-ticket-saver.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
-// @match        https://wayfarer.nianticlabs.com/*
+// @match        https://wayfarer.scopely.com/*
 // @match        https://webchat.helpshift.com/*
 // @grant        GM_setValue
 // @grant        GM_getValue

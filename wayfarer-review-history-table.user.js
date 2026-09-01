@@ -4,7 +4,7 @@
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
-// @match        https://wayfarer.nianticlabs.com/*
+// @match        https://wayfarer.scopely.com/*
 // @run-at       document-start
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js
 // @require      https://cdn.datatables.net/1.12.1/js/jquery.dataTables.min.js

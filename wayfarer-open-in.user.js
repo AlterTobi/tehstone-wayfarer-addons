@@ -5,7 +5,7 @@
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-open-in.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
-// @match        https://wayfarer.nianticlabs.com/*
+// @match        https://wayfarer.scopely.com/*
 // @match        https://www.geobenin.bj/carto/www/
 // @match        https://www.geoland.at/webgisviewer/geoland/map/Geoland_Viewer/Geoland
 // @match        https://www.geoportal-bw.de/

@@ -5,7 +5,7 @@
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-counter.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
-// @match        https://wayfarer.nianticlabs.com/*
+// @match        https://wayfarer.scopely.com/*
 // ==/UserScript==
 
 // Copyright 2024 tehstone, bilde
