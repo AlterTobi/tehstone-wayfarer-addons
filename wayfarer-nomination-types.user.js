@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Nomination Types
-// @version      0.2.1
+// @version      0.2.2
 // @description  Shows an indicator for which game you submitted nominations in.
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-types.user.js

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Reverse Image Search
-// @version      0.4.1
+// @version      0.4.2
 // @description  Add reverse image search links to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-reverse-image-search.user.js

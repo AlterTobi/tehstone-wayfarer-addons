@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Edits Difference
-// @version      1.0.1
+// @version      1.0.2
 // @description  Highlights the differences between similar options on edit reviews in Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-edits-diff.user.js

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Ticket Saver
-// @version      0.2.3
+// @version      0.2.4
 // @description  Saves interactions with Niantic Support initiated through Wayfarer.
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-ticket-saver.user.js

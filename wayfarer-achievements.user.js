@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Achievements
-// @version      0.0.1
+// @version      0.0.2
 // @description  Adds some fun achievements you can earn in Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-achievements.user.js

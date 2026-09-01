@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Rejections Plus
-// @version      0.2.5
+// @version      0.2.6
 // @description  Improves the display of criteria on rejected nominations, allows displaying more than two rejection reasons, and more.
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-rejections-plus.user.js

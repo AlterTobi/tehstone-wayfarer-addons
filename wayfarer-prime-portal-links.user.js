@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Prime Portal Links
-// @version      0.1.0
+// @version      0.1.1
 // @description  Add links to open Showcase and Nearby portals in Ingress Prime
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-prime-portal-links.user.js

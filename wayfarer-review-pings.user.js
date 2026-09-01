@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Pings
-// @version      0.2.1
+// @version      0.2.2
 // @description  Plays a sound when a new review is available
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-pings.user.js

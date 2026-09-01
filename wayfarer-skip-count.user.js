@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Skip Counter
-// @version      0.0.2
+// @version      0.0.3
 // @description  Count your skip usage in the last 24 hours
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-skip-count.user.js

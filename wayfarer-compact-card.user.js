@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Compact Card Reviewing
-// @version      0.2.1
+// @version      0.2.2
 // @description  Add compact card reviewing
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-compact-card.user.js
