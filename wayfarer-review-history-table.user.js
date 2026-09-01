@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review History Table
-// @version      0.4.0
+// @version      0.4.3
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
@@ -45,16 +45,16 @@
             "PHOTO_FACE": "Face or body parts",
             "PHOTO_PLATE": "License plate",
             "PHOTO_DIR": "Orientation",
-            "PHOTO_TAG": "Sumbitter identifiable",
+            "PHOTO_TAG": "Submitter identifiable",
             "PHOTO_3P": "Third party photo",
             "PHOTO_WATERMARK": "Watermark",
             "PHOTO_BAD": "Low quality or inaccurate photo",
             "EMOJI_TITLE": "Emoji or emoticon",
             "MARKUP_TITLE": "URL or markup",
             "TEXT_BAD_TITLE": "Low quality or inaccurate title",
-            "EMOJI_DESCRIPTION": "Emoji or emoticon",
-            "MARKUP_DESCRIPTION": "URL or markup",
-            "TEXT_BAD_DESCRIPTION": "Low quality or inaccurate title",
+            "EMOJI_DESCRIPTION": "Emoji or emoticon in description",
+            "MARKUP_DESCRIPTION": "URL or markup in description",
+            "TEXT_BAD_DESCRIPTION": "Low quality or inaccurate description",
             "ACCURACY_FAKE": "Fake nomination",
             "ACCURACY_EXPLICIT": "Explicit Content",
             "ACCURACY_PERSONAL": "Influencing Reviewers",
@@ -67,7 +67,7 @@
             "SENSITIVE": "Sensitive location",
             "EMERGENCY": "Obstructs emergency operations",
             "GENERIC": "Generic business",
-            "": ""
+            "": "(Blank)"
         };
     let l10n;
 
@@ -109,6 +109,26 @@
         .join("")}</span>`;
     }
 
+    const formatContent = obj => {
+        if (obj === null) {
+            return null;
+        } else if (Array.isArray(obj)) {
+            return obj.map(e => formatContent(e));
+        } else if (typeof obj === "object") {
+            const e = {};
+            for (const [k, v] of Object.entries(obj)) {
+                e[k] = formatContent(v);
+            }
+            return e;
+        } else if (typeof obj === "string") {
+            const e = document.createElement("p");
+            e.textContent = obj;
+            return e.innerHTML;
+        } else {
+            return obj.toString();
+        }
+    }
+
     const renderReviewHistory = result => new Promise((resolve, reject) => {
         getIDBInstance().then(db => {
             const toSave = [];
@@ -130,9 +150,9 @@
                     }
                 }
                 renderTableSelector();
-                renderTable(toSave);
-                renderEditsTable(editsToSave);
-                renderPhotosTable(photosToSave);
+                renderTable(formatContent(toSave));
+                renderEditsTable(formatContent(editsToSave));
+                renderPhotosTable(formatContent(photosToSave));
             };
         }).catch(reject);
     });
@@ -165,7 +185,7 @@
         displayPhotoTable.classList.add('wayfarerns__button');
         tableSelectorContainer.appendChild(displayPhotoTable);
 
-        const ratingNarRef = document.querySelector('wf-rating-bar');
+        const ratingNarRef = document.querySelector('wf-credibility-card');
         const container = ratingNarRef.parentNode.parentNode;
         container.appendChild(tableSelectorContainer);
     }
@@ -184,16 +204,16 @@
     function renderTable(reviewData) {
       const tableContainer = document.createElement("div");
       tableContainer.id = "nomination-table";
-      tableContainer.classList.add("table");
+      tableContainer.classList.add("review-history-table");
       tableContainer.style.display = "block";
       tableContainer.insertAdjacentHTML("beforeend",
         `
         <div class="table-responsive">
-                <table class="table table-striped table-condensed" id="review-history">
+                <table class="review-history-table table-striped table-condensed" id="review-history">
                 </table>
             </div>
         `)
-      const ratingNarRef = document.querySelector('wf-rating-bar');
+      const ratingNarRef = document.querySelector('wf-credibility-card');
       const container = ratingNarRef.parentNode.parentNode;
       container.appendChild(tableContainer);
 
@@ -253,7 +273,7 @@
                                 review[0].rejectReasons.forEach(r => {
                                     let rejectionText = l10n[`reject.reason.${r.toLowerCase()}.short`];
                                     if (rejectionText === undefined || rejectionText === "") {
-                                        rejectionText = REJECTION_MAPPINGS[r];
+                                        rejectionText = REJECTION_MAPPINGS[r] || r;
                                     }
                                     rejections.push(rejectionText);
                                 })
@@ -404,16 +424,16 @@
     function renderEditsTable(reviewData) {
       const tableContainer = document.createElement("div");
       tableContainer.id = "edit-table";
-      tableContainer.classList.add("table");
+      tableContainer.classList.add("review-history-table");
       tableContainer.style.display = "none";
       tableContainer.insertAdjacentHTML("beforeend",
         `
         <div class="table-responsive">
-                <table class="table table-striped table-condensed" id="edit-review-history">
+                <table class="review-history-table table-striped table-condensed" id="edit-review-history">
                 </table>
             </div>
         `)
-      const ratingNarRef = document.querySelector('wf-rating-bar');
+      const ratingNarRef = document.querySelector('wf-credibility-card');
       const container = ratingNarRef.parentNode.parentNode;
       container.appendChild(tableContainer);
 
@@ -583,7 +603,7 @@
             rows.push(`<tr><td class="text-center">${selected}</td><td class="text-center">${content}</td></tr>`);
         });
         return `
-        <table class="table table-condensed scores">
+        <table class="review-history-table table-condensed scores">
           <thead>
               <tr>
                   <th class="text-center">Selected</th>
@@ -601,16 +621,16 @@
         console.log("history table click here");
       const tableContainer = document.createElement("div");
       tableContainer.id = "photo-table";
-      tableContainer.classList.add("table");
+      tableContainer.classList.add("review-history-table");
       tableContainer.style.display = "none";
       tableContainer.insertAdjacentHTML("beforeend",
         `
         <div class="table-responsive">
-                <table class="table table-striped table-condensed" id="photo-review-history">
+                <table class="review-history-table table-striped table-condensed" id="photo-review-history">
                 </table>
             </div>
         `)
-      const ratingNarRef = document.querySelector('wf-rating-bar');
+      const ratingNarRef = document.querySelector('wf-credibility-card');
       const container = ratingNarRef.parentNode.parentNode;
       container.appendChild(tableContainer);
 
@@ -792,7 +812,7 @@
                 return "";
             }
             return `
-            <table class="table table-condensed scores">
+            <table class="review-history-table table-condensed scores">
               <thead>
                   <tr>
                       <th class="text-center">Score</th>
@@ -838,7 +858,7 @@
             return rejections.join("<br />");
         } else {
             return `
-                <table class="table table-condensed scores">
+                <table class="review-history-table table-condensed scores">
                   <thead>
                       <tr>
                           <th class="text-center">Appropriate</th>

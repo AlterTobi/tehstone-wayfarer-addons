@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Extended Stats
-// @version      0.7.1
+// @version      0.7.2
 // @description  Add extended Wayfarer Profile stats
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-extended-stats.user.js
@@ -90,7 +90,7 @@ function init() {
                 console.warn('Wayfarer\'s response didn\'t include a candidate.');
                 return;
             }
-            awaitElement(() => document.querySelector('wf-rating-bar'))
+            awaitElement(() => document.querySelector('wf-credibility-card'))
             .then((ref) => {
                 addSettings();
                 addCopyLink();
@@ -158,7 +158,7 @@ function init() {
             settingsContainer.appendChild(collapsibleLabel);
             settingsContainer.appendChild(collapsibleContent);
 
-            const ratingNarRef = document.querySelector('wf-rating-bar');
+            const ratingNarRef = document.querySelector('wf-credibility-card');
             const container = ratingNarRef.parentNode.parentNode;
             container.appendChild(settingsContainer);
         }
@@ -416,7 +416,7 @@ function init() {
         div.appendChild(document.createElement('br'));
         div.appendChild(exportButton);
 
-        const ref = document.querySelector('wf-rating-bar');
+        const ref = document.querySelector('wf-credibility-card');
         const container = ref.parentNode;
         container.appendChild(div);
 
