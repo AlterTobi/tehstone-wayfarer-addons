@@ -4,6 +4,7 @@
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-history-table.user.js
 // @match        https://wayfarer.scopely.com/*
 // @run-at       document-start
 // @require      https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js

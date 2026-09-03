@@ -3,7 +3,7 @@
 // @version      0.5.3
 // @description  Add map of all nominations
 // @namespace    https://github.com/tehstone/wayfarer-addons/
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-nomination-map.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-nomination-map.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons/
 // @match        https://wayfarer.scopely.com/*
 // ==/UserScript==

@@ -3,7 +3,7 @@
 // @version      0.0.2
 // @description  Adds some fun achievements you can earn in Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons/
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-achievements.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-achievements.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons/
 // @match        https://wayfarer.scopely.com/*
 // @run-at       document-start

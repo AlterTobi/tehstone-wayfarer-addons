@@ -3,8 +3,8 @@
 // @version      0.0.12
 // @description  Improves the layout of the Contribution Management page
 // @namespace    https://github.com/tehstone/wayfarer-addons/
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-contribution-management-layout.user.js
-// @updateUrl    https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-contribution-management-layout.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-contribution-management-layout.user.js
+// @updateUrl    https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-contribution-management-layout.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons/
 // @match        https://wayfarer.scopely.com/*
 // @run-at       document-start

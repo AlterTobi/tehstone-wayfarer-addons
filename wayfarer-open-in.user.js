@@ -3,7 +3,7 @@
 // @version      0.7.6
 // @description  Add open-in buttons to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-open-in.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-open-in.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.scopely.com/*
 // @match        https://www.geobenin.bj/carto/www/

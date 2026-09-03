@@ -3,7 +3,7 @@
 // @version      0.0.3
 // @description  Count your skip usage in the last 24 hours
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-skip-count.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-skip-count.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.scopely.com/*
 // ==/UserScript==

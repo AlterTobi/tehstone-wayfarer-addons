@@ -3,7 +3,7 @@
 // @version      0.4.2
 // @description  Add reverse image search links to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
-// @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-reverse-image-search.user.js
+// @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-reverse-image-search.user.js
 // @homepageURL  https://github.com/tehstone/wayfarer-addons
 // @match        https://wayfarer.scopely.com/*
 // ==/UserScript==
