@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Extended Stats
-// @version      0.7.3
+// @version      0.7.4
 // @description  Add extended Wayfarer Profile stats
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-extended-stats.user.js
@@ -582,7 +582,7 @@ function init() {
             .wayfarercc {
                 color: #333;
                 margin-left: 2em;
-                padding-top: 0.3em;
+                align-self: center;
                 text-align: center;
                 display: none;
               }

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Skip Counter
-// @version      0.0.3
+// @version      0.0.4
 // @description  Count your skip usage in the last 24 hours
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-skip-count.user.js
@@ -178,7 +178,7 @@ function init() {
               .wayfarerrsc, .wayfarerrsc_low, .wayfarerrsc_mid, .wayfarerrsc_med, .wayfarerrsc_high, .wayfarerrsc_extreme {
                   color: #333;
                   margin-left: 2em;
-                  padding-top: 0.3em;
+                  align-self: center;
                   text-align: center;
                   display: block;
               }

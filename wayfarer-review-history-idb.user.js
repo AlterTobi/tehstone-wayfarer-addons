@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review History
-// @version      0.5.3
+// @version      0.5.4
 // @description  Add local review history storage to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-history-idb.user.js
@@ -574,7 +574,7 @@
         const css = `
         .wfrh-idb {
             color: #333;
-            padding-top: 0.3em;
+            align-self: center;
             text-align: center;
             display: block;
         }

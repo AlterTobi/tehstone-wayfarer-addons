@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Map Mods
-// @version      0.9.4
+// @version      0.9.5
 // @description  Add Map Mods to Wayfarer Review Page
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-map-mods.user.js
@@ -1015,7 +1015,7 @@ function init() {
             .wayfarercc {
                 color: #333;
                 margin-left: 2em;
-                padding-top: 0.3em;
+                align-self: center;
                 text-align: center;
                 display: none;
               }

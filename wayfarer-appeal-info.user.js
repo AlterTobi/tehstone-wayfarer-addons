@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Appeal Info
-// @version      0.1.12
+// @version      0.1.13
 // @description  Save and display info about appeals
 // @namespace    https://github.com/tehstone/wayfarer-addons/
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-appeal-info.user.js
@@ -456,7 +456,7 @@ function init() {
             .wfai_can_appeal {
                 color: #333;
                 margin-left: 2em;
-                padding-top: 0.3em;
+                align-self: center;
                 text-align: center;
                 display: block;
             }

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Review Counter
-// @version      0.4.2
+// @version      0.4.3
 // @description  Add review counter to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://altertobi.github.io/tehstone-wayfarer-addons/wayfarer-review-counter.user.js
@@ -346,7 +346,7 @@
           .wayfarerrctr, .wayfarerrctr_event {
               color: #333;
               margin-left: 2em;
-              padding-top: 0.3em;
+              align-self: center;
               text-align: center;
               display: block;
           }

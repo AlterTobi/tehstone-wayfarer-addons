@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Wayfarer Translate
-// @version      0.3.4
+// @version      0.3.5
 // @description  Add translate option to Wayfarer
 // @namespace    https://github.com/tehstone/wayfarer-addons
 // @downloadURL  https://github.com/tehstone/wayfarer-addons/raw/main/wayfarer-translate.user.js
@@ -184,7 +184,7 @@ function init() {
 			.wayfarertranslate {
 				color: #333;
 				margin-left: 2em;
-				padding-top: 0.3em;
+				align-self: center;
 				text-align: center;
 				display: none;
 			}
