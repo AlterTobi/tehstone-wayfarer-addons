@@ -8,7 +8,7 @@
 // @match        https://wayfarer.scopely.com/*
 // ==/UserScript==
 
-// Copyright 2024 tehstone
+// Copyright 2026 tehstone
 // This file is part of the Wayfarer Addons collection.
 
 // This script is free software: you can redistribute it and/or modify
